@@ -1,0 +1,87 @@
+@startuml provider-class
+
+skinparam classAttributeIconSize 0
+skinparam monochrome true
+skinparam shadowing false
+
+interface Provider {
+  + {abstract} async chat(request) : ChatResult
+  + {abstract} async models() : list[str]
+}
+
+class ChatResult {
+  + content : str
+  + usage : Usage
+  + model : str
+  + finish_reason : str
+}
+
+class Usage {
+  + input_tokens : int
+  + output_tokens : int
+  + cache_creation_input_tokens : int
+  + cache_read_input_tokens : int
+}
+
+class OpenAIProvider {
+  - client : AsyncOpenAI
+  + async chat(request) : ChatResult
+  + async models() : list[str]
+}
+
+class AnthropicProvider {
+  - client : AsyncAnthropic
+  + async chat(request) : ChatResult
+  + async models() : list[str]
+}
+
+class GoogleProvider {
+  - client : genai.Client
+  + async chat(request) : ChatResult
+  + async models() : list[str]
+}
+
+class MockProvider {
+  + async chat(request) : ChatResult
+  + async models() : list[str]
+}
+
+class AliasResolver {
+  - aliases : dict
+  - per_key_overrides : dict
+  + resolve(alias, api_key) : tuple[str, str | None]
+  + primary(alias) : str
+  + fallback(alias) : str | None
+}
+
+class CircuitBreaker {
+  - redis : Redis
+  - provider_id : str
+  - failure_threshold : int
+  - cooldown_seconds : int
+  + state : str
+  + record_success() : None
+  + record_failure() : None
+  + is_open() : bool
+  + try_half_open() : bool
+}
+
+class ExactCache {
+  - redis : Redis
+  + get(key: str) : ChatResult | None
+  + set(key: str, result: ChatResult, ttl: int) : None
+  + make_key(prompt_version, tenant, messages) : str
+}
+
+Provider <|.. OpenAIProvider
+Provider <|.. AnthropicProvider
+Provider <|.. GoogleProvider
+Provider <|.. MockProvider
+
+ChatResult *-- Usage
+
+AliasResolver ..> Provider : "resolves to"
+CircuitBreaker ..> Provider : "guards"
+ExactCache ..> ChatResult : "stores/returns"
+
+@enduml

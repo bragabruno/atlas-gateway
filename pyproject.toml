@@ -12,7 +12,11 @@ dependencies = [
     "sqlalchemy==2.0.50",
     "alembic==1.18.4",
     "psycopg[binary]==3.3.4",
+    "asyncpg==0.31.0",
 ]
+
+[tool.setuptools.packages.find]
+include = ["app*"]
 
 [project.optional-dependencies]
 dev = [

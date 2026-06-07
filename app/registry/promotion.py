@@ -1,4 +1,5 @@
 """REG-5 — Prompt-version promotion state machine + instant rollback.
+REG-13 — Promotion gated on evals (server-side eval-gate enforcement).
 
 Walks a `prompt_versions` row through the lifecycle from atlas-docs/03 §1.5 —
 ``draft`` → ``candidate`` → ``production``, and any state → ``retired`` — and
@@ -9,10 +10,23 @@ prior (still ``candidate``-eligible) version straight back to ``production`` —
 so the next `app.registry.resolver` resolve of ``<name>@production`` returns the
 rolled-back version with no redeploy.
 
-A capability module per ADR-016: the status store is a `Protocol` injected at
-construction, so the state machine is exercised fully offline with an in-memory
-fake (`tests/test_registry_promotion.py`) and a real asyncpg/ORM-backed store
-can satisfy the same shape later. Transition rules are enforced here (the DB
+REG-13 adds the **eval gate**: ``candidate → production`` is allowed only when an
+eval-gate-green signal exists for that exact version. The gate is the regression
+gate from atlas-docs/03 §1.6 / ADR-015 (``eval_runs`` / ``eval_results.passed``,
+the REG-11 ``gate.py`` verdict), surfaced here through an injected
+:class:`EvalGateChecker`. Enforcement is **server-side** — it lives in this
+gateway-owned service, not in CI or a client — so a green CI check is necessary
+but the production pointer never flips without the gateway itself re-confirming
+the gate. A version with no green eval result, or a failing one, cannot be
+promoted to production through any path (``transition``, ``promote``, or
+``rollback``). Retirement and the ``draft → candidate`` step are not gated — only
+the move that puts a version in front of live traffic.
+
+A capability module per ADR-016: the status store and the eval-gate checker are
+`Protocol`s injected at construction, so the state machine is exercised fully
+offline with in-memory fakes (`tests/test_registry_promotion.py`,
+`tests/test_promotion_eval_gate.py`) and real asyncpg/ORM-backed implementations
+can satisfy the same shapes later. Transition rules are enforced here (the DB
 holds the status column but does not police legal transitions), failing fast on
 any illegal move rather than silently writing an invalid state.
 """
@@ -66,6 +80,37 @@ class PromotionStore(Protocol):
         ...
 
 
+class EvalGateChecker(Protocol):
+    """Read port over the eval-gate verdict for a version (REG-13).
+
+    ``is_green(version_id)`` returns ``True`` only when the eval gate has passed
+    for that exact version — i.e. there is a green eval run (atlas-docs/03 §1.6
+    ``eval_results.passed``, the REG-11 ``gate.py`` verdict). The state machine
+    calls this server-side before any promotion to ``production``. The in-memory
+    fake the tests inject and a real ``eval_runs``/``eval_results``-backed checker
+    both satisfy this. Implementations must default to *not* green for an unknown
+    version (fail-closed): the absence of a passing eval is not a pass.
+    """
+
+    def is_green(self, version_id: str) -> bool:
+        """Return ``True`` iff `version_id` has a passing eval-gate result."""
+        ...
+
+
+class _NoEvalGate:
+    """Default checker used when REG-5 callers inject no gate (fail-closed).
+
+    Promotion to ``production`` is impossible without an explicit
+    :class:`EvalGateChecker` — an un-gated `PromotionService` may walk
+    ``draft → candidate``, retire, and roll back to an *already-eligible* prior
+    version, but it can never put a fresh version in front of live traffic. This
+    keeps REG-13 enforcement on by default rather than opt-in.
+    """
+
+    def is_green(self, version_id: str) -> bool:  # noqa: ARG002 — fixed False by contract
+        return False
+
+
 class UnknownVersionError(Exception):
     """Raised when a version id is not present in the store."""
 
@@ -86,6 +131,19 @@ class IllegalTransitionError(Exception):
         super().__init__(f"illegal transition for {version_id}: {current.value} -> {target.value}")
 
 
+class EvalGateNotGreenError(Exception):
+    """Raised when a version is promoted to ``production`` without a green eval gate (REG-13).
+
+    Distinct from `IllegalTransitionError`: the transition itself is *legal*
+    (``candidate → production``, or a rollback target), but the server-side eval
+    gate has not passed for `version_id`, so the production pointer must not flip.
+    """
+
+    def __init__(self, version_id: str) -> None:
+        self.version_id = version_id
+        super().__init__(f"eval gate is not green for version: {version_id}")
+
+
 def _is_allowed(current: PromptStatusEnum, target: PromptStatusEnum) -> bool:
     """Whether `current` → `target` is a legal lifecycle move (§1.5).
 
@@ -101,16 +159,25 @@ def _is_allowed(current: PromptStatusEnum, target: PromptStatusEnum) -> bool:
 
 
 class PromotionService:
-    """Enforces the prompt-version lifecycle and the production pointer (REG-5).
+    """Enforces the prompt-version lifecycle and the production pointer (REG-5/REG-13).
 
-    The status store is injected (composition root / tests supply it), so this
-    service does no DB access of its own. Every state change is validated before
-    it is written; promoting to ``production`` atomically demotes the previous
-    production version so at most one version is ever production.
+    The status store and the eval-gate checker are injected (composition root /
+    tests supply them), so this service does no DB access of its own. Every state
+    change is validated before it is written; promoting to ``production``
+    atomically demotes the previous production version so at most one version is
+    ever production. Per REG-13 any move *into* ``production`` is additionally
+    gated server-side on `eval_gate.is_green(version_id)`: with no gate injected a
+    fail-closed default (`_NoEvalGate`) blocks all production promotions.
     """
 
-    def __init__(self, store: PromotionStore) -> None:
+    def __init__(
+        self,
+        store: PromotionStore,
+        *,
+        eval_gate: EvalGateChecker | None = None,
+    ) -> None:
         self._store = store
+        self._eval_gate: EvalGateChecker = eval_gate if eval_gate is not None else _NoEvalGate()
 
     def _require_status(self, version_id: str) -> PromptStatusEnum:
         """Return `version_id`'s status or raise `UnknownVersionError` (fail fast)."""
@@ -124,14 +191,18 @@ class PromotionService:
 
         Returns the new status. Raises `UnknownVersionError` for an unknown
         version and `IllegalTransitionError` for a disallowed move. Promoting to
-        ``production`` demotes the prompt's prior production version (the pointer
-        flip); use `rollback` to flip the pointer back to a specific version.
+        ``production`` is additionally gated server-side on the eval gate
+        (REG-13): an un-green version raises `EvalGateNotGreenError` and nothing
+        is written. A successful production promotion demotes the prompt's prior
+        production version (the pointer flip); use `rollback` to flip the pointer
+        back to a specific version.
         """
         current = self._require_status(version_id)
         if not _is_allowed(current, target):
             raise IllegalTransitionError(version_id, current, target)
 
         if target == PromptStatusEnum.production:
+            self._require_eval_green(version_id)
             self._demote_current_production(version_id)
 
         self._store.set_status(version_id, target)
@@ -164,8 +235,10 @@ class PromotionService:
         ``<name>@production`` returns `to_version_id` with no redeploy. Raises
         `UnknownVersionError` if `to_version_id` is unknown, and
         `IllegalTransitionError` if it is ``retired`` (a retired version cannot
-        be made production). Rolling back to the version already in production is
-        a no-op that returns ``production``.
+        be made production). The rolled-back version must still pass the eval gate
+        (REG-13) — flipping the pointer is a production promotion, so a version
+        whose gate is not green raises `EvalGateNotGreenError`. Rolling back to
+        the version already in production is a no-op that returns ``production``.
         """
         current = self._require_status(to_version_id)
         if current == PromptStatusEnum.production:
@@ -173,9 +246,21 @@ class PromotionService:
         if current == PromptStatusEnum.retired:
             raise IllegalTransitionError(to_version_id, current, PromptStatusEnum.production)
 
+        self._require_eval_green(to_version_id)
         self._demote_current_production(to_version_id)
         self._store.set_status(to_version_id, PromptStatusEnum.production)
         return PromptStatusEnum.production
+
+    def _require_eval_green(self, version_id: str) -> None:
+        """Block a production promotion unless the eval gate is green (REG-13).
+
+        Server-side enforcement: queries the injected `EvalGateChecker` and
+        raises `EvalGateNotGreenError` if `version_id` has no passing eval result,
+        before any status is written. Called on every path that flips the
+        production pointer (`transition` to ``production`` and `rollback`).
+        """
+        if not self._eval_gate.is_green(version_id):
+            raise EvalGateNotGreenError(version_id)
 
     def _demote_current_production(self, incoming_version_id: str) -> None:
         """Demote the prompt's current production version (≠ incoming) to candidate.

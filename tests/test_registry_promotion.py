@@ -6,6 +6,11 @@ retired) and the production pointer fully offline against an in-memory
 raise `IllegalTransitionError`, promoting to production demotes the prior
 production version (single-production invariant), and rollback flips the pointer
 back so the next resolve uses the prior version.
+
+These REG-5 lifecycle tests inject an always-green eval gate so they exercise the
+state machine in isolation; the REG-13 eval-gate enforcement (production
+promotion blocked unless the gate is green) is pinned in
+`tests/test_promotion_eval_gate.py`.
 """
 
 from __future__ import annotations
@@ -21,6 +26,18 @@ from app.registry.promotion import (
 )
 from app.registry.resolver import PromptResolver, PromptVersionRow
 from app.repositories.tables import PromptStatusEnum
+
+
+class _GreenGate:
+    """Always-green eval gate so REG-5 tests focus on lifecycle, not REG-13."""
+
+    def is_green(self, version_id: str) -> bool:  # noqa: ARG002 — always green for REG-5
+        return True
+
+
+def _svc(store: _FakeStore) -> PromotionService:
+    """A `PromotionService` over `store` with the always-green REG-5 gate."""
+    return PromotionService(store, eval_gate=_GreenGate())
 
 
 @dataclass
@@ -121,20 +138,20 @@ def _row(
 
 def test_draft_to_candidate_is_allowed() -> None:
     store = _store(_row("v1", PromptStatusEnum.draft))
-    svc = PromotionService(store)
+    svc = _svc(store)
     assert svc.transition("v1", PromptStatusEnum.candidate) == PromptStatusEnum.candidate
     assert store.rows["v1"].status == PromptStatusEnum.candidate
 
 
 def test_candidate_to_production_is_allowed() -> None:
     store = _store(_row("v1", PromptStatusEnum.candidate))
-    PromotionService(store).transition("v1", PromptStatusEnum.production)
+    _svc(store).transition("v1", PromptStatusEnum.production)
     assert store.rows["v1"].status == PromptStatusEnum.production
 
 
 def test_promote_walks_one_step_at_a_time() -> None:
     store = _store(_row("v1", PromptStatusEnum.draft))
-    svc = PromotionService(store)
+    svc = _svc(store)
     assert svc.promote("v1") == PromptStatusEnum.candidate
     assert svc.promote("v1") == PromptStatusEnum.production
 
@@ -145,7 +162,7 @@ def test_any_state_can_retire() -> None:
         _row("c", PromptStatusEnum.candidate, semver="2.0.0"),
         _row("p", PromptStatusEnum.production, semver="3.0.0"),
     )
-    svc = PromotionService(store)
+    svc = _svc(store)
     assert svc.retire("d") == PromptStatusEnum.retired
     assert svc.retire("c") == PromptStatusEnum.retired
     assert svc.retire("p") == PromptStatusEnum.retired
@@ -157,7 +174,7 @@ def test_any_state_can_retire() -> None:
 def test_draft_to_production_is_rejected() -> None:
     store = _store(_row("v1", PromptStatusEnum.draft))
     with pytest.raises(IllegalTransitionError) as exc:
-        PromotionService(store).transition("v1", PromptStatusEnum.production)
+        _svc(store).transition("v1", PromptStatusEnum.production)
     assert exc.value.current == PromptStatusEnum.draft
     assert exc.value.target == PromptStatusEnum.production
     assert store.rows["v1"].status == PromptStatusEnum.draft  # unchanged
@@ -166,12 +183,12 @@ def test_draft_to_production_is_rejected() -> None:
 def test_candidate_to_draft_is_rejected() -> None:
     store = _store(_row("v1", PromptStatusEnum.candidate))
     with pytest.raises(IllegalTransitionError):
-        PromotionService(store).transition("v1", PromptStatusEnum.draft)
+        _svc(store).transition("v1", PromptStatusEnum.draft)
 
 
 def test_retired_is_terminal() -> None:
     store = _store(_row("v1", PromptStatusEnum.retired))
-    svc = PromotionService(store)
+    svc = _svc(store)
     for target in (
         PromptStatusEnum.draft,
         PromptStatusEnum.candidate,
@@ -185,17 +202,17 @@ def test_retired_is_terminal() -> None:
 def test_noop_transition_is_rejected() -> None:
     store = _store(_row("v1", PromptStatusEnum.candidate))
     with pytest.raises(IllegalTransitionError):
-        PromotionService(store).transition("v1", PromptStatusEnum.candidate)
+        _svc(store).transition("v1", PromptStatusEnum.candidate)
 
 
 def test_promote_from_production_has_no_forward_edge() -> None:
     store = _store(_row("v1", PromptStatusEnum.production))
     with pytest.raises(IllegalTransitionError):
-        PromotionService(store).promote("v1")
+        _svc(store).promote("v1")
 
 
 def test_unknown_version_fails_fast() -> None:
-    svc = PromotionService(_store())
+    svc = _svc(_store())
     with pytest.raises(UnknownVersionError) as exc:
         svc.transition("ghost", PromptStatusEnum.candidate)
     assert exc.value.version_id == "ghost"
@@ -209,7 +226,7 @@ def test_promoting_to_production_demotes_prior_production() -> None:
         _row("old", PromptStatusEnum.production, semver="1.0.0"),
         _row("new", PromptStatusEnum.candidate, semver="2.0.0"),
     )
-    PromotionService(store).transition("new", PromptStatusEnum.production)
+    _svc(store).transition("new", PromptStatusEnum.production)
     assert store.rows["new"].status == PromptStatusEnum.production
     assert store.rows["old"].status == PromptStatusEnum.candidate
     # At most one production version per prompt.
@@ -223,7 +240,7 @@ def test_other_prompts_production_is_untouched() -> None:
         _row("a-prod", PromptStatusEnum.production, prompt_id="A", semver="1.0.0"),
         _row("b-cand", PromptStatusEnum.candidate, prompt_id="B", semver="1.0.0"),
     )
-    PromotionService(store).transition("b-cand", PromptStatusEnum.production)
+    _svc(store).transition("b-cand", PromptStatusEnum.production)
     assert store.rows["a-prod"].status == PromptStatusEnum.production
 
 
@@ -232,7 +249,7 @@ def test_rollback_flips_pointer_and_demotes_current() -> None:
         _row("prior", PromptStatusEnum.candidate, semver="1.0.0"),
         _row("current", PromptStatusEnum.production, semver="2.0.0"),
     )
-    svc = PromotionService(store)
+    svc = _svc(store)
     assert svc.rollback("p", "prior") == PromptStatusEnum.production
     assert store.rows["prior"].status == PromptStatusEnum.production
     assert store.rows["current"].status == PromptStatusEnum.candidate
@@ -249,7 +266,7 @@ def test_rollback_then_resolve_uses_prior_version() -> None:
     # Before rollback, production resolves to the current version.
     assert resolver.resolve("p@production").prompt_version_id == "current"
 
-    PromotionService(store).rollback("p", "prior")
+    _svc(store).rollback("p", "prior")
 
     # After the pointer flip, the same resolve returns the prior version.
     assert resolver.resolve("p@production").prompt_version_id == "prior"
@@ -257,7 +274,7 @@ def test_rollback_then_resolve_uses_prior_version() -> None:
 
 def test_rollback_to_current_production_is_noop() -> None:
     store = _store(_row("v1", PromptStatusEnum.production))
-    assert PromotionService(store).rollback("p", "v1") == PromptStatusEnum.production
+    assert _svc(store).rollback("p", "v1") == PromptStatusEnum.production
     assert store.rows["v1"].status == PromptStatusEnum.production
 
 
@@ -267,11 +284,11 @@ def test_rollback_to_retired_version_is_rejected() -> None:
         _row("current", PromptStatusEnum.production, semver="2.0.0"),
     )
     with pytest.raises(IllegalTransitionError):
-        PromotionService(store).rollback("p", "retired")
+        _svc(store).rollback("p", "retired")
     assert store.rows["current"].status == PromptStatusEnum.production
 
 
 def test_rollback_unknown_version_fails_fast() -> None:
     store = _store(_row("current", PromptStatusEnum.production))
     with pytest.raises(UnknownVersionError):
-        PromotionService(store).rollback("p", "ghost")
+        _svc(store).rollback("p", "ghost")

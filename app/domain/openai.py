@@ -1,9 +1,10 @@
-"""OpenAI-compatible request/response schema for /v1/chat/completions.
+"""OpenAI-compatible request/response schema for the gateway endpoints.
 
-This is the external contract clients see (the OpenAI shape) for both the
-non-streaming response and the streaming `chat.completion.chunk` deltas. It is
-the wire DTO of the domain layer, distinct from the provider-internal types in
-`app.domain.messages`. See atlas-docs/03.
+This is the external contract clients see (the OpenAI shape) for chat
+completions (non-streaming response + streaming `chat.completion.chunk`
+deltas), the `/v1/models` list (GW-8), and `/v1/embeddings` (GW-8). It is the
+wire DTO of the domain layer, distinct from the provider-internal types in
+`app.domain.messages`. See atlas-docs/03 + ADR-016.
 """
 
 from __future__ import annotations
@@ -71,3 +72,43 @@ class ChatCompletionChunk(BaseModel):
     choices: list[ChunkChoice]
     object: str = "chat.completion.chunk"
     usage: CompletionUsage | None = None
+
+
+# --- Models list (GET /v1/models, GW-8) ---
+
+
+class Model(BaseModel):
+    id: str
+    owned_by: str
+    object: str = "model"
+
+
+class ModelList(BaseModel):
+    data: list[Model]
+    object: str = "list"
+
+
+# --- Embeddings (POST /v1/embeddings, GW-8) ---
+
+
+class EmbeddingRequest(BaseModel):
+    model: str
+    input: str | list[str]
+
+
+class EmbeddingData(BaseModel):
+    index: int
+    embedding: list[float]
+    object: str = "embedding"
+
+
+class EmbeddingUsage(BaseModel):
+    prompt_tokens: int
+    total_tokens: int
+
+
+class EmbeddingResponse(BaseModel):
+    data: list[EmbeddingData]
+    model: str
+    usage: EmbeddingUsage
+    object: str = "list"

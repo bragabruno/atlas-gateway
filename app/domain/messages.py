@@ -52,3 +52,15 @@ class StreamDelta(BaseModel):
     content: str = ""
     finish_reason: str | None = None
     usage: Usage | None = None
+
+
+class EmbeddingResult(BaseModel):
+    """Normalized result of a provider embedding call (GW-8).
+
+    Carries one vector per input string (order-preserving) plus token `usage`
+    so the cost recorder (GW-14) can price embedding calls uniformly.
+    """
+
+    model: str
+    embeddings: list[list[float]]
+    usage: Usage

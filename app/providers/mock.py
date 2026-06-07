@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 
-from app.providers.base import ChatResult, Message, StreamDelta, Usage
+from app.domain.messages import ChatResult, Message, StreamDelta, Usage
 
 
 def _count_tokens(text: str) -> int:

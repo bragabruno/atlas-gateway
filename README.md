@@ -18,39 +18,49 @@ OpenAI-compatible LLM Gateway for the Atlas platform. Routes chat, embedding, an
 
 Authentication: Bearer token per-key in `Authorization` header.
 
+## Architecture: layered + DI (ADR-016)
+
+The service follows a layered spine — **controllers → services → repositories → domain** — with the capability modules (providers, cache, limits, …) as adapters the service layer composes. FastAPI `Depends` is the DI container; `app/api/deps.py` is the composition root. This is "Spring-style" separation without a heavyweight framework: HTTP shape lives only in `api/`, business logic only in `services/`, DB access only in `repositories/`, and the framework-free contracts in `domain/`. See [`../atlas-docs/02-tech-stack-and-adrs.md`](../atlas-docs/02-tech-stack-and-adrs.md) (ADR-016) and [`../atlas-docs/research/framework-evaluation.md`](../atlas-docs/research/framework-evaluation.md) §5.2.
+
 ## Module Map (`app/`)
 
 ```
 app/
-├── api/v1/
-│   ├── chat.py          # POST /v1/chat/completions (stream + non-stream)
-│   ├── models.py        # GET /v1/models
-│   └── embeddings.py    # POST /v1/embeddings
-├── providers/
-│   ├── base.py          # Provider Protocol: async chat(...)->ChatResult, async models()
-│   ├── openai.py        # OpenAI provider
-│   ├── anthropic.py     # Anthropic provider
-│   ├── google.py        # Google (Gemini) provider
-│   └── mock.py          # Mock provider (testing)
-├── routing/
-│   └── aliases.py       # AliasResolver: alias→primary+fallback, per-key overrides
-├── resilience/
-│   ├── retry.py         # tenacity retry policies
-│   └── circuit_breaker.py  # Redis-backed per-provider CB (closed/open/half-open)
-├── cache/
-│   ├── exact.py         # Redis exact cache (key: prompt_version + tenant)
-│   └── semantic.py      # Qdrant semantic cache (threshold 0.97, opt-in, tenant-scoped)
-├── accounting/
-│   └── recorder.py      # asyncpg insert to call_records; cost formula; emits to Kafka atlas.calls.v1
-├── limits/
-│   ├── ratelimit.py     # Redis token-bucket → 429
-│   └── budget.py        # Monthly budget → 429 + 80% alert
-├── guardrails/
-│   └── chain.py         # Pre/post middleware chain
-├── telemetry/
-│   └── otel.py          # GenAI semconv → OTel Collector → Splunk
-└── prompts/
-    └── registry.py      # Registry client: resolve prompt_ref → rendered config
+├── main.py              # FastAPI app factory + /healthz (composition root)
+├── config.py            # Settings (env/Key Vault, no secrets in code)
+│
+├── api/                 # ── Controllers: HTTP only (parse, auth, serialize) ──
+│   ├── deps.py          # DI providers: settings, auth, registry, services
+│   └── v1/
+│       ├── chat.py      # POST /v1/chat/completions (stream + non-stream) → ChatService
+│       ├── models.py    # GET /v1/models
+│       └── embeddings.py# POST /v1/embeddings
+│
+├── services/            # ── Service layer: the only home of business logic ──
+│   └── chat_service.py  # resolve provider → call → map usage → response/SSE frames
+│
+├── repositories/        # ── Persistence: asyncpg (hot path) / SQLAlchemy (ADR-010) ──
+│   └── (GW-9 schema, GW-14 accounting)
+│
+├── domain/              # ── Contracts (no framework deps) ──
+│   ├── messages.py      # Message, Usage (4 token fields), ChatResult, StreamDelta
+│   ├── openai.py        # OpenAI-compatible request/response/chunk wire schema
+│   └── errors.py        # UnknownModelError (→ 404 in the controller)
+│
+└── (capability adapters the services compose)
+    ├── providers/
+    │   ├── base.py      # Provider port (Protocol)
+    │   ├── registry.py  # ProviderRegistry: model/alias → adapter
+    │   ├── openai.py · anthropic.py · google.py  # real adapters (GW-3..5)
+    │   └── mock.py      # deterministic offline adapter (testing)
+    ├── routing/         # aliases.py — AliasResolver: alias→primary+fallback (GW-10)
+    ├── resilience/      # retry.py (tenacity) · circuit_breaker.py (Redis, per-provider)
+    ├── cache/           # exact.py (Redis) · semantic.py (Qdrant 0.97, opt-in)
+    ├── accounting/      # recorder.py — call_records cost formula → Kafka atlas.calls.v1
+    ├── limits/          # ratelimit.py (token-bucket→429) · budget.py (monthly→429 +80%)
+    ├── guardrails/      # chain.py — pre/post middleware chain
+    ├── telemetry/       # otel.py — GenAI semconv → OTel Collector → Splunk
+    └── prompts/         # registry.py — resolve prompt_ref → rendered config
 ```
 
 ### Model Aliases

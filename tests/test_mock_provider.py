@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from app.providers.base import Message, Provider
+from app.domain.messages import Message
+from app.providers.base import Provider
 from app.providers.mock import MockProvider
 
 

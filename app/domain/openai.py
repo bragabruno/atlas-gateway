@@ -2,8 +2,8 @@
 
 This is the external contract clients see (the OpenAI shape) for both the
 non-streaming response and the streaming `chat.completion.chunk` deltas. It is
-distinct from the provider-internal types in `app.providers.base`. See
-atlas-docs/03.
+the wire DTO of the domain layer, distinct from the provider-internal types in
+`app.domain.messages`. See atlas-docs/03.
 """
 
 from __future__ import annotations

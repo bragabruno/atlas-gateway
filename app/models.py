@@ -1,7 +1,9 @@
 """OpenAI-compatible request/response schema for /v1/chat/completions.
 
-This is the external contract clients see (the OpenAI shape). It is distinct
-from the provider-internal types in `app.providers.base`. See atlas-docs/03.
+This is the external contract clients see (the OpenAI shape) for both the
+non-streaming response and the streaming `chat.completion.chunk` deltas. It is
+distinct from the provider-internal types in `app.providers.base`. See
+atlas-docs/03.
 """
 
 from __future__ import annotations
@@ -46,3 +48,26 @@ class ChatCompletionResponse(BaseModel):
     choices: list[Choice]
     usage: CompletionUsage
     object: str = "chat.completion"
+
+
+# --- Streaming (chat.completion.chunk) ---
+
+
+class ChoiceDelta(BaseModel):
+    role: str | None = None
+    content: str | None = None
+
+
+class ChunkChoice(BaseModel):
+    index: int = 0
+    delta: ChoiceDelta
+    finish_reason: str | None = None
+
+
+class ChatCompletionChunk(BaseModel):
+    id: str
+    created: int
+    model: str
+    choices: list[ChunkChoice]
+    object: str = "chat.completion.chunk"
+    usage: CompletionUsage | None = None

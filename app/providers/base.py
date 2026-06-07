@@ -8,6 +8,7 @@ can price cached input correctly — see atlas-docs/03.
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from typing import Protocol, runtime_checkable
 
 from pydantic import BaseModel
@@ -35,12 +36,24 @@ class Usage(BaseModel):
 
 
 class ChatResult(BaseModel):
-    """Normalized result of a provider chat call."""
+    """Normalized result of a non-streaming provider chat call."""
 
     model: str
     content: str
     finish_reason: str = "stop"
     usage: Usage
+
+
+class StreamDelta(BaseModel):
+    """One increment of a streaming provider response.
+
+    Content deltas carry `content`; the terminal delta carries `finish_reason`
+    and the final `usage` (and no content).
+    """
+
+    content: str = ""
+    finish_reason: str | None = None
+    usage: Usage | None = None
 
 
 @runtime_checkable
@@ -58,6 +71,17 @@ class Provider(Protocol):
         temperature: float | None = None,
     ) -> ChatResult:
         """Run a chat completion and return a normalized `ChatResult`."""
+        ...
+
+    def chat_stream(
+        self,
+        *,
+        model: str,
+        messages: list[Message],
+        max_tokens: int | None = None,
+        temperature: float | None = None,
+    ) -> AsyncIterator[StreamDelta]:
+        """Stream a chat completion as incremental `StreamDelta`s."""
         ...
 
     async def models(self) -> list[str]:

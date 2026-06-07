@@ -14,6 +14,8 @@ from fastapi import Depends, Header, HTTPException
 from app.config import Settings, get_settings
 from app.providers.registry import ProviderRegistry
 from app.services.chat_service import ChatService
+from app.services.embeddings_service import EmbeddingsService
+from app.services.models_service import ModelsService
 
 _registry = ProviderRegistry()
 
@@ -27,6 +29,18 @@ def get_chat_service(
     registry: Annotated[ProviderRegistry, Depends(get_provider_registry)],
 ) -> ChatService:
     return ChatService(registry)
+
+
+def get_models_service(
+    registry: Annotated[ProviderRegistry, Depends(get_provider_registry)],
+) -> ModelsService:
+    return ModelsService(registry)
+
+
+def get_embeddings_service(
+    registry: Annotated[ProviderRegistry, Depends(get_provider_registry)],
+) -> EmbeddingsService:
+    return EmbeddingsService(registry)
 
 
 def require_api_key(

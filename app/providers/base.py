@@ -12,7 +12,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from typing import Protocol, runtime_checkable
 
-from app.domain.messages import ChatResult, Message, StreamDelta
+from app.domain.messages import ChatResult, EmbeddingResult, Message, StreamDelta
 
 
 @runtime_checkable
@@ -41,6 +41,10 @@ class Provider(Protocol):
         temperature: float | None = None,
     ) -> AsyncIterator[StreamDelta]:
         """Stream a chat completion as incremental `StreamDelta`s."""
+        ...
+
+    async def embed(self, *, model: str, inputs: list[str]) -> EmbeddingResult:
+        """Embed each input string and return a normalized `EmbeddingResult`."""
         ...
 
     async def models(self) -> list[str]:

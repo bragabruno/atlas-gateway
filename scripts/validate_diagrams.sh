@@ -40,9 +40,11 @@ PUPPETEER_CONFIG="${PUPPETEER_CONFIG:-}"
 
 fail_count=0
 checked_count=0
+skipped_count=0
 
 log()  { printf '%s\n' "$*"; }
 err()  { printf 'ERROR: %s\n' "$*" >&2; }
+warn() { printf 'WARN: %s\n' "$*" >&2; }
 
 # Resolve scan roots: explicit args, else conventional defaults that exist.
 roots=()
@@ -74,7 +76,9 @@ validate_mermaid() {
   # an SVG in a throwaway dir. A parse error makes mmdc exit non-zero.
   local out
   out="$(mktemp -d)"
-  if $MMDC "${mmdc_args[@]}" --input "$file" --output "$out/out.svg" >/dev/null 2>"$out/err.log"; then
+  # bash 3.2-safe empty-array expansion (macOS): "${arr[@]}" alone trips set -u
+  # when the array has no elements (the common local case: no PUPPETEER_CONFIG).
+  if $MMDC "${mmdc_args[@]+"${mmdc_args[@]}"}" --input "$file" --output "$out/out.svg" >/dev/null 2>"$out/err.log"; then
     log "  OK  (mermaid) $file"
   else
     err "mermaid validation failed: $file"
@@ -86,17 +90,20 @@ validate_mermaid() {
 
 validate_plantuml() {
   local file="$1"
-  checked_count=$((checked_count + 1))
   local rc=0
   if [ -n "${PLANTUML_JAR:-}" ]; then
     java -jar "$PLANTUML_JAR" -checkonly -failfast2 "$file" || rc=$?
   elif command -v plantuml >/dev/null 2>&1; then
     plantuml -checkonly -failfast2 "$file" || rc=$?
   else
-    err "PlantUML not available (set PLANTUML_JAR or install 'plantuml' v${PLANTUML_VERSION}); cannot validate $file"
-    fail_count=$((fail_count + 1))
+    # PlantUML absent (no PLANTUML_JAR, no `plantuml` on PATH). Advisory skip, not
+    # a failure: CI always provides the pinned jar (bitbucket-pipelines.yml), so
+    # .puml is validated there; locally this lets the mermaid gate still pass.
+    warn "PlantUML not available (set PLANTUML_JAR or install 'plantuml' v${PLANTUML_VERSION}); skipping $file"
+    skipped_count=$((skipped_count + 1))
     return
   fi
+  checked_count=$((checked_count + 1))
   if [ "$rc" -eq 0 ]; then
     log "  OK  (plantuml) $file"
   else
@@ -130,7 +137,10 @@ for root in "${roots[@]}"; do
 done
 
 log ""
-log "validate_diagrams.sh: checked ${checked_count} diagram source file(s), ${fail_count} failure(s)."
+log "validate_diagrams.sh: checked ${checked_count} diagram source file(s), ${fail_count} failure(s), ${skipped_count} skipped."
+if [ "$skipped_count" -gt 0 ]; then
+  warn "${skipped_count} PlantUML file(s) skipped (no PlantUML toolchain); set PLANTUML_JAR to validate them."
+fi
 
 if [ "$fail_count" -gt 0 ]; then
   exit 1

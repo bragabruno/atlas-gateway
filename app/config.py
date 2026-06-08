@@ -45,6 +45,13 @@ class Settings(BaseSettings):
     openai_api_key: str | None = None
     google_api_key: str | None = None
 
+    #: Streamable-HTTP endpoint of the ``mcp-citations`` server (AGT-12). ``None``
+    #: (default) means no live citation verifier is built, so the GRD-9 citation
+    #: guardrail keeps its stub/unwired default and the request path is unchanged.
+    #: A real deployment sets ATLAS_CITATION_MCP_URL so the composition root can
+    #: build an `McpToolClient` and inject the live `McpCitationVerifier`.
+    citation_mcp_url: str | None = None
+
 
 def get_settings() -> Settings:
     return Settings()

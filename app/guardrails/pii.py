@@ -62,6 +62,12 @@ _PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
 )
 
 
+#: Public, read-only view of the fast-path patterns for reuse by the telemetry
+#: redaction layer (GRD-12), so the request-path and log/trace definitions of
+#: "what is PII" share one source and cannot drift. Order is the detection order.
+PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = _PATTERNS
+
+
 def _redact_text(text: str) -> tuple[str, dict[str, int]]:
     """Redact all known PII in `text`.
 

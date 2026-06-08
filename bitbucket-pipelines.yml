@@ -1,6 +1,6 @@
 # Bitbucket Pipelines — atlas-gateway (INF-2, Gate 1 + XCUT-4 + XCUT-6).
 #
-# Gate 1 (Correctness): ruff -> pyright --strict -> pytest (offline, zero API spend).
+# Gate 1 (Correctness): Trunk(ruff) -> pyright --strict -> pytest (zero API spend).
 # XCUT-4: dep_audit.py fails on any unpinned / <14-day-old dependency.
 # XCUT-6: validate_diagrams.sh validates Mermaid + PlantUML diagrams.
 #
@@ -12,6 +12,7 @@ image: python:3.12.13-slim-bookworm  # 3.12.13 (2026-03-03)
 definitions:
   caches:
     pip-cache: ~/.cache/pip
+    trunk-cache: ~/.cache/trunk
 
   steps:
     - step: &dep-audit
@@ -21,12 +22,19 @@ definitions:
           - python scripts/dep_audit.py --min-age-days 14
 
     - step: &lint-typecheck
-        name: "Gate 1a — Lint & Typecheck"
-        caches: [pip-cache]
+        name: "Gate 1a — Lint (Trunk → ruff) & Typecheck"
+        caches: [pip-cache, trunk-cache]
         script:
+          # Trunk runs ruff (pinned @0.11.13 in .trunk/trunk.yaml). Trunk is
+          # git-native and fetches its tools at runtime, so the slim image needs
+          # git + curl + network — Gate 1a is no longer fully offline (still zero
+          # LLM/API spend). The installer drops `trunk` in /usr/local/bin (root).
+          - apt-get update && apt-get install -y --no-install-recommends git curl ca-certificates
+          # pyright + test/type deps stay in [dev]; ruff is no longer in [dev].
           - pip install --quiet -e ".[dev]"
-          - ruff check .
-          - ruff format --check .
+          - curl -fsSL https://get.trunk.io | bash -s -- -y
+          # One check = ruff lint + ruff format over all files; rc!=0 on any issue.
+          - trunk check --all --ci
           - pyright
 
     - step: &unit-tests

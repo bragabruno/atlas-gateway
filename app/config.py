@@ -37,6 +37,14 @@ class Settings(BaseSettings):
     budget_enabled: bool = False
     guardrails_enabled: bool = False
 
+    #: Provider API keys, all default ``None`` (Key-Vault-injected in real
+    #: deployments). A real provider (GW-3..5) is registered only when its key is
+    #: present; with the defaults (no keys) the registry stays Mock-only, exactly
+    #: the pre-wiring behaviour the default and test environments rely on.
+    anthropic_api_key: str | None = None
+    openai_api_key: str | None = None
+    google_api_key: str | None = None
+
 
 def get_settings() -> Settings:
     return Settings()

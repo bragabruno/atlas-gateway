@@ -25,6 +25,28 @@
             "title": "Model",
             "type": "string"
           },
+          "prompt_params": {
+            "anyOf": [
+              {
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Prompt Params"
+          },
+          "prompt_ref": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Prompt Ref"
+          },
           "stream": {
             "default": false,
             "title": "Stream",

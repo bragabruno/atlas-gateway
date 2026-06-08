@@ -23,6 +23,13 @@ class ChatCompletionRequest(BaseModel):
     max_tokens: int | None = None
     temperature: float | None = None
     stream: bool = False
+    #: REG-4 — optional prompt-registry reference (``<name>@<semver|production>``)
+    #: and its template params. When present and a prompt registry is wired, the
+    #: gateway resolves the ref, renders it, and injects it as a leading system
+    #: message. ``None`` (the default) leaves the request unchanged, so a plain
+    #: chat request behaves exactly as before.
+    prompt_ref: str | None = None
+    prompt_params: dict[str, object] | None = None
 
 
 class ResponseMessage(BaseModel):

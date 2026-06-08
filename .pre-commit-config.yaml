@@ -1,6 +1,6 @@
 # Pre-commit hooks for atlas-gateway (INF-1).
 # Hook revs are pinned to releases >=14 days old per atlas-docs/02 §2.
-# ruff rev matches the pinned ruff in pyproject.toml ([project.optional-dependencies] dev).
+# ruff rev matches the ruff pinned in .trunk/trunk.yaml (Trunk is the source of truth).
 minimum_pre_commit_version: "3.5.0"
 
 repos:
@@ -14,7 +14,7 @@ repos:
       - id: check-merge-conflict
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.9.6  # matches pyproject ruff==0.9.6
+    rev: v0.11.13  # matches .trunk/trunk.yaml ruff@0.11.13
     hooks:
       - id: ruff
         args: [--fix]

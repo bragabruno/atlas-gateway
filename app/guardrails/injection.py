@@ -82,7 +82,7 @@ class InjectionGuardrail:
 
     async def check(self, ctx: GuardrailContext) -> None:
         """Scan `ctx.messages`; raise on the first injection pattern matched."""
-        label = self._first_match(ctx.messages)
+        label = self.matched_label(ctx.messages)
         if label is None:
             return
         raise GuardrailRejection(
@@ -92,8 +92,14 @@ class InjectionGuardrail:
         )
 
     @staticmethod
-    def _first_match(messages: Sequence[Message]) -> str | None:
-        """Return the label of the first pattern that matches, else `None`."""
+    def matched_label(messages: Sequence[Message]) -> str | None:
+        """Return the label of the first heuristic pattern that matches, else `None`.
+
+        The public, side-effect-free form of the screen `check` raises on. GRD-5
+        (`injection_classifier`) reuses it to decide ambiguity — an input the
+        heuristic already flags is handled here and is *not* escalated to the
+        cheap-model classifier. Returns the label, never the matched text.
+        """
         for message in messages:
             for label, pattern in _PATTERNS:
                 if pattern.search(message.content):

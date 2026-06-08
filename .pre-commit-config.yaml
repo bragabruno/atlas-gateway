@@ -1,0 +1,21 @@
+# Pre-commit hooks for atlas-gateway (INF-1).
+# Hook revs are pinned to releases >=14 days old per atlas-docs/02 §2.
+# ruff rev matches the pinned ruff in pyproject.toml ([project.optional-dependencies] dev).
+minimum_pre_commit_version: "3.5.0"
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0  # 2025-08-09
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-added-large-files
+      - id: check-merge-conflict
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.9.6  # matches pyproject ruff==0.9.6
+    hooks:
+      - id: ruff
+        args: [--fix]
+      - id: ruff-format

@@ -1,0 +1,22 @@
+{{- /*
+Plain Deployment — rendered only when canary is OFF (dev, and any env not using
+Argo Rollouts). When canary.enabled is true the Rollout (rollout.yaml) owns the
+pods instead, so exactly one controller manages them (atlas-docs/04 §4.2, §5.4).
+*/ -}}
+{{- if not .Values.canary.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "atlas-gateway.fullname" . }}
+  labels:
+    {{- include "atlas-gateway.labels" . | nindent 4 }}
+spec:
+  {{- if not .Values.autoscaling.enabled }}
+  replicas: {{ .Values.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "atlas-gateway.selectorLabels" . | nindent 6 }}
+  template:
+    {{- include "atlas-gateway.podSpec" . | nindent 4 }}
+{{- end }}

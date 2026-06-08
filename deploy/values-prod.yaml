@@ -1,0 +1,41 @@
+# atlas-gateway/deploy/values-prod.yaml — prod overrides (atlas-docs/04 §4.2, §5.4).
+# Argo Rollouts canary replaces the Deployment; HPA + PDB on; larger SKUs.
+
+replicaCount: 3
+
+image:
+  pullPolicy: IfNotPresent
+
+# Argo Rollouts canary (replaces the Deployment) — steps/analysis come from the
+# chart defaults (10% → SLO check → 50% → SLO check), no auto-promotion.
+canary:
+  enabled: true
+
+autoscaling:
+  enabled: true
+  minReplicas: 3
+  maxReplicas: 20
+  targetCPUUtilizationPercentage: 65
+  targetMemoryUtilizationPercentage: 75
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 2
+
+resources:
+  requests:
+    cpu: "500m"
+    memory: "512Mi"
+  limits:
+    cpu: "2000m"
+    memory: "2Gi"
+
+secrets:
+  keyVaultName: "kv-atlas-prod"
+  # tenantId / userAssignedIdentityID injected by Terraform output in CI.
+
+kafka:
+  bootstrapServers: "atlas-kafka-bootstrap.atlas-platform.svc:9092"
+
+serviceMonitor:
+  enabled: true

@@ -1,0 +1,22 @@
+apiVersion: v2
+name: atlas-gateway
+description: >-
+  OpenAI-compatible LLM gateway for the Atlas platform — per-key auth, rate
+  limiting, budget enforcement, caching, circuit breaking, and OpenTelemetry
+  GenAI instrumentation. Production-shaped chart per atlas-docs/04 §4.2, §5.4
+  (HPA, PDB, probes, Key Vault CSI mount, Argo Rollouts canary).
+type: application
+# Chart version — bump on chart changes (independent of the app image tag).
+version: 0.1.0
+# Tracks the atlas-gateway application version (pyproject [project].version).
+appVersion: "0.1.0"
+kubeVersion: ">=1.27.0-0"
+sources:
+  - https://github.com/atlas-platform/atlas-gateway
+maintainers:
+  - name: Atlas Platform Engineering
+keywords:
+  - llm-gateway
+  - openai-compatible
+  - opentelemetry
+  - argo-rollouts

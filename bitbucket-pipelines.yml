@@ -1,8 +1,12 @@
-# Bitbucket Pipelines — atlas-gateway (INF-2, Gate 1 + XCUT-4 + XCUT-6).
+# Bitbucket Pipelines — atlas-gateway.
 #
-# Gate 1 (Correctness): Trunk(ruff) -> pyright --strict -> pytest (zero API spend).
-# XCUT-4: dep_audit.py fails on any unpinned / <14-day-old dependency.
-# XCUT-6: validate_diagrams.sh validates Mermaid + PlantUML diagrams.
+# Orchestration only: every gate calls a versioned script under scripts/ (the
+# single source of truth). Run `make ci` locally for the same gates. Logic lives
+# in scripts/, not in this file. See atlas-docs/07-build-system.md.
+#
+# Gate 1a (scripts/lint.sh): dep age audit (XCUT-4) + Trunk(ruff) + pyright.
+# Gate 1b (scripts/test.sh): offline pytest (MockProvider + fakeredis; zero spend).
+# XCUT-6  (scripts/validate_diagrams.sh): Mermaid + PlantUML diagram validation.
 #
 # Image pinned exactly (atlas-docs/02 §2). Auth, where needed, is OIDC / repo
 # secrets referenced by name only — no secret values in this file.
@@ -15,38 +19,27 @@ definitions:
     trunk-cache: ~/.cache/trunk
 
   steps:
-    - step: &dep-audit
-        name: "XCUT-4 — Dependency + age audit"
-        caches: [pip-cache]
-        script:
-          - python scripts/dep_audit.py --min-age-days 14
-
-    - step: &lint-typecheck
-        name: "Gate 1a — Lint (Trunk → ruff) & Typecheck"
+    - step: &lint
+        name: "Gate 1a — Lint, Typecheck & Dep-audit (scripts/lint.sh)"
         caches: [pip-cache, trunk-cache]
         script:
-          # Trunk runs ruff (pinned @0.11.13 in .trunk/trunk.yaml). Trunk is
+          # Env prep only; all validation logic is in scripts/lint.sh. Trunk is
           # git-native and fetches its tools at runtime, so the slim image needs
-          # git + curl + network — Gate 1a is no longer fully offline (still zero
-          # LLM/API spend). The installer drops `trunk` in /usr/local/bin (root).
+          # git + curl + network (still zero LLM/API spend).
           - apt-get update && apt-get install -y --no-install-recommends git curl ca-certificates
-          # pyright + test/type deps stay in [dev]; ruff is no longer in [dev].
           - pip install --quiet -e ".[dev]"
           - curl -fsSL https://get.trunk.io | bash -s -- -y
-          # One check = ruff lint + ruff format over all files; rc!=0 on any issue.
-          - trunk check --all --ci
-          - pyright
+          - ./scripts/lint.sh
 
     - step: &unit-tests
-        name: "Gate 1b — Unit Tests (zero API spend)"
+        name: "Gate 1b — Unit Tests (scripts/test.sh)"
         caches: [pip-cache]
         script:
           - pip install --quiet -e ".[dev]"
-          # Offline: MockProvider + fakeredis; no live PG/Redis/LLM calls.
-          - pytest -q
+          - ./scripts/test.sh
 
     - step: &diagram-validation
-        name: "XCUT-6 — Diagram validation"
+        name: "XCUT-6 — Diagram validation (scripts/validate_diagrams.sh)"
         image: node:22.22.2-bookworm-slim  # 22.22.2 (2026-03-24)
         script:
           # JRE for PlantUML + Chromium deps for mermaid-cli headless render.
@@ -61,13 +54,12 @@ definitions:
           - export PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
           - printf '{"args":["--no-sandbox"]}' > /tmp/puppeteer.json
           - export PUPPETEER_CONFIG=/tmp/puppeteer.json
-          - bash scripts/validate_diagrams.sh docs/diagrams
+          - ./scripts/validate_diagrams.sh docs/diagrams
 
 pipelines:
   pull-requests:
     "**":
       - parallel:
-          - step: *dep-audit
-          - step: *lint-typecheck
+          - step: *lint
           - step: *unit-tests
           - step: *diagram-validation

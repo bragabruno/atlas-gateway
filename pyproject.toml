@@ -19,6 +19,14 @@ dependencies = [
     "opentelemetry-api==1.42.1",
     "opentelemetry-sdk==1.42.1",
     "opentelemetry-semantic-conventions==0.63b1",
+    # Provider SDKs (GW-3..5). Each pinned to the latest release published on or
+    # before 2026-05-24; all resolved transitive deps are ≥14 days old.
+    "anthropic==0.104.1",
+    "openai==2.38.0",
+    "google-genai==2.6.0",
+    # openai requires `tqdm>4`; the resolver's pick (4.68.1, 2026-06-05) is <14
+    # days old, so pin to the latest tqdm published well before the floor.
+    "tqdm==4.67.3",
 ]
 
 [tool.setuptools.packages.find]

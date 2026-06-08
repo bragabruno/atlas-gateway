@@ -38,7 +38,7 @@ from fakeredis.aioredis import FakeRedis
 from fastapi.testclient import TestClient
 
 from app.api.deps import get_chat_service
-from app.cache.exact import ExactCache
+from app.cache.exact import NO_PROMPT_VERSION, ExactCache
 from app.domain.messages import ChatResult, EmbeddingResult, Message, StreamDelta, Usage
 from app.domain.openai import ChatCompletionRequest, ChatMessage
 from app.guardrails.chain import GuardrailChain, GuardrailRejection
@@ -84,6 +84,7 @@ class _CountingProvider:
         self.tag = tag
         self.calls = 0
         self.seen_models: list[str] = []
+        self.seen_messages: list[list[Message]] = []
 
     async def chat(
         self,
@@ -95,6 +96,7 @@ class _CountingProvider:
     ) -> ChatResult:
         self.calls += 1
         self.seen_models.append(model)
+        self.seen_messages.append(list(messages))
         last = messages[-1].content if messages else ""
         return ChatResult(
             model=model,
@@ -377,6 +379,63 @@ async def test_recorder_receives_one_call_context() -> None:
     assert call.api_key_id == _KEY
     assert call.model == "mock"
     assert call.usage.output_tokens == 2
+    # No prompt_ref → the recorded prompt version is the sentinel.
+    assert call.prompt_version == NO_PROMPT_VERSION
+
+
+# --- Prompt registry (REG-4) ----------------------------------------------
+
+
+class _FakeResolvedPrompt:
+    """Structural stand-in for `app.registry.resolver.ResolvedPrompt`."""
+
+    def __init__(self, prompt_version_id: str, rendered: str) -> None:
+        self.prompt_version_id = prompt_version_id
+        self.rendered = rendered
+
+
+class _FakePromptRegistry:
+    """Resolves any `prompt_ref` to a fixed rendered prompt + version (REG-4)."""
+
+    def __init__(self, prompt_version_id: str, rendered: str) -> None:
+        self._resolved = _FakeResolvedPrompt(prompt_version_id, rendered)
+        self.seen_refs: list[str] = []
+
+    def resolve(self, ref: str, params: dict[str, object] | None = None) -> _FakeResolvedPrompt:
+        self.seen_refs.append(ref)
+        return self._resolved
+
+
+async def test_prompt_ref_renders_system_message_and_records_version() -> None:
+    """REG-4: a `prompt_ref` request renders the registry prompt as a leading
+    system message AND the resolved prompt version reaches the accounting seam.
+
+    Guards the wiring gap where `prompt_version` was resolved + used for the
+    cache key but never threaded into the recorded `CallContext`.
+    """
+    provider = _CountingProvider("p")
+    registry = ProviderRegistry({"mock": provider})
+    prompts = _FakePromptRegistry("pv-123", "You are a careful regulatory analyst.")
+    recorder = _FakeRecorder()
+    service = ChatService(registry, recorder=recorder, prompt_registry=prompts)
+
+    req = ChatCompletionRequest(
+        model="mock",
+        messages=[ChatMessage(role="user", content="What does Article 5 require?")],
+        prompt_ref="regdoc-qa@production",
+    )
+    await service.complete(req, api_key_id=_KEY)
+
+    # renders: the registry prompt is injected as the leading system message,
+    # ahead of the original user turn.
+    assert prompts.seen_refs == ["regdoc-qa@production"]
+    sent = provider.seen_messages[0]
+    assert sent[0].role == "system"
+    assert sent[0].content == "You are a careful regulatory analyst."
+    assert sent[-1].content == "What does Article 5 require?"
+    # accounting records the resolved prompt version (the fixed REG-4 gap).
+    assert len(recorder.records) == 1
+    assert recorder.records[0].prompt_version == "pv-123"
 
 
 # --- Full wired stack -----------------------------------------------------

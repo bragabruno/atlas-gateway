@@ -52,8 +52,9 @@ flowchart TD
             OTEL["otel\n(GenAI semconv)"]
         end
 
-        subgraph prompts["prompts"]
-            PRG["registry\n(prompt_ref → rendered config)"]
+        subgraph registry["registry"]
+            RES["resolver\n(prompt_ref → rendered config)"]
+            PROM["promotion\n(draft → candidate → production;\ninstant rollback)"]
         end
     end
 
@@ -86,7 +87,8 @@ flowchart TD
     BASE --> GOO
     BASE --> MOCK
 
-    CHAT --> PRG
+    CHAT --> RES
+    RES --> PROM
     EMBED --> BASE
 
     GC -->|"post-call"| REC

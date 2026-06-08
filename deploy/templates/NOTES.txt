@@ -1,0 +1,14 @@
+atlas-gateway {{ .Chart.AppVersion }} deployed as release {{ .Release.Name }} in namespace {{ .Release.Namespace }}.
+
+Workload controller:
+{{- if .Values.canary.enabled }}
+  Argo Rollouts Rollout (canary) — promotion gated by the slo-check AnalysisTemplate.
+  Watch:   kubectl argo rollouts get rollout {{ include "atlas-gateway.fullname" . }} --watch
+{{- else }}
+  Deployment ({{ .Values.replicaCount }} replica(s){{ if .Values.autoscaling.enabled }}, HPA-managed{{ end }}).
+  Status:  kubectl rollout status deployment/{{ include "atlas-gateway.fullname" . }}
+{{- end }}
+
+Service:   {{ include "atlas-gateway.fullname" . }}:{{ .Values.service.port }} (ClusterIP)
+Health:    {{ .Values.probes.path }}
+Secrets:   {{ if .Values.secrets.enabled }}Key Vault "{{ .Values.secrets.keyVaultName }}" via CSI at {{ .Values.secrets.mountPath }}{{ else }}disabled{{ end }}

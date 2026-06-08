@@ -1,0 +1,59 @@
+{{- /*
+Argo Rollouts AnalysisTemplate referenced by the canary steps (templateName:
+slo-check). Gates promotion on the SLOs in atlas-docs/04 §5.4 — HTTP error rate,
+p95 latency, and guardrail block rate — queried from Prometheus; a failed metric
+fails the analysis and the Rollout controller rolls back to the last stable
+revision. Rendered only when canary is on. The Prometheus address is the
+in-cluster server; PromQL queries are illustrative of the §5.4 thresholds.
+*/ -}}
+{{- if .Values.canary.enabled }}
+apiVersion: argoproj.io/v1alpha1
+kind: AnalysisTemplate
+metadata:
+  name: slo-check
+  labels:
+    {{- include "atlas-gateway.labels" . | nindent 4 }}
+spec:
+  args:
+    - name: service
+      value: {{ include "atlas-gateway.fullname" . }}
+  metrics:
+    # HTTP error rate < 1% (rollback trigger: > 2% sustained 3m).
+    - name: error-rate
+      interval: 1m
+      count: 3
+      failureLimit: 1
+      successCondition: result[0] < 0.02
+      provider:
+        prometheus:
+          address: http://prometheus-operated.monitoring.svc:9090
+          query: |
+            sum(rate(http_requests_total{service="{{`{{args.service}}`}}",code=~"5.."}[3m]))
+              /
+            sum(rate(http_requests_total{service="{{`{{args.service}}`}}"}[3m]))
+    # p95 latency < 2s (rollback trigger: > 5s sustained 3m).
+    - name: p95-latency
+      interval: 1m
+      count: 3
+      failureLimit: 1
+      successCondition: result[0] < 5
+      provider:
+        prometheus:
+          address: http://prometheus-operated.monitoring.svc:9090
+          query: |
+            histogram_quantile(0.95,
+              sum(rate(http_request_duration_seconds_bucket{service="{{`{{args.service}}`}}"}[3m])) by (le))
+    # Guardrail block rate < 5% (rollback trigger: > 15% sustained 3m).
+    - name: guardrail-block-rate
+      interval: 1m
+      count: 3
+      failureLimit: 1
+      successCondition: result[0] < 0.15
+      provider:
+        prometheus:
+          address: http://prometheus-operated.monitoring.svc:9090
+          query: |
+            sum(rate(atlas_guardrail_blocked_total{service="{{`{{args.service}}`}}"}[3m]))
+              /
+            sum(rate(http_requests_total{service="{{`{{args.service}}`}}"}[3m]))
+{{- end }}

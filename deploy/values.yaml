@@ -1,0 +1,156 @@
+# atlas-gateway/deploy/values.yaml — chart defaults (atlas-docs/04 §4.2).
+# Env overlays: values-dev.yaml (1 replica, small SKUs, plain Deployment) and
+# values-prod.yaml (HPA, PDB, Argo Rollouts canary). Secrets are mounted from
+# Azure Key Vault via the Secrets Store CSI driver — never baked into the image
+# or a plain Kubernetes Secret (atlas-docs/04 §3).
+
+replicaCount: 2
+
+image:
+  repository: acr.azurecr.io/atlas/gateway
+  tag: "" # overridden at deploy time with the git SHA (atlas-docs/04 §4.2)
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+# Argo Rollouts canary. false → a plain Deployment is rendered; true (set in
+# values-prod.yaml) → a Rollout with the canary strategy below (atlas-docs §5.4).
+canary:
+  enabled: false
+  steps:
+    - setWeight: 10 # 10% of traffic to canary pods
+    - pause: { duration: 5m }
+    - analysis:
+        templates:
+          - templateName: slo-check
+    - setWeight: 50
+    - pause: { duration: 5m }
+    - analysis:
+        templates:
+          - templateName: slo-check
+  # Never auto-promote — the AnalysisTemplate (error_rate, p95_latency,
+  # guardrail_block_rate) gates promotion; failure → rollback (atlas-docs §5.4).
+  autoPromotionEnabled: false
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations:
+    # Azure Workload Identity client-id — injected by Terraform output / CI.
+    azure.workload.identity/client-id: ""
+
+podAnnotations: {}
+podLabels:
+  # Required for Azure Workload Identity token projection.
+  azure.workload.identity/use: "true"
+
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 8000
+
+containerPort: 8000
+
+# GenAI semconv opt-in is set on every pod so gen_ai.* span attributes are
+# emitted (atlas-docs/04 §6.1). The OTLP endpoint targets the node-local OTel
+# Collector DaemonSet over loopback. Real secret *values* come from CSI, not here.
+env:
+  - name: OTEL_SEMCONV_STABILITY_OPT_IN
+    value: gen_ai_latest_experimental
+  - name: OTEL_EXPORTER_OTLP_ENDPOINT
+    value: http://$(HOST_IP):4317
+  - name: OTEL_SERVICE_NAME
+    value: atlas-gateway
+  - name: HOST_IP
+    valueFrom:
+      fieldRef:
+        fieldPath: status.hostIP
+
+# Kafka bootstrap for the atlas.calls.v1 accounting events (GW-15, ADR-007).
+# Non-secret endpoint here; SASL credentials (if any) come from the CSI mount.
+kafka:
+  bootstrapServers: "atlas-kafka-bootstrap.atlas-platform.svc:9092"
+
+# Azure Key Vault → Secrets Store CSI driver. Mounted at secrets.mountPath as
+# files; the app reads from the filesystem (atlas-docs/04 §3). keyVaultName and
+# tenantId are injected per env.
+secrets:
+  enabled: true
+  mountPath: /mnt/secrets
+  keyVaultName: ""
+  tenantId: ""
+  # User-assigned managed identity client-id used by the CSI provider.
+  userAssignedIdentityID: ""
+  objects:
+    - objectName: openai-api-key
+      objectType: secret
+    - objectName: anthropic-api-key
+      objectType: secret
+    - objectName: google-api-key
+      objectType: secret
+
+resources:
+  requests:
+    cpu: "250m"
+    memory: "256Mi"
+  limits:
+    cpu: "1000m"
+    memory: "1Gi"
+
+# Horizontal Pod Autoscaler (enabled in prod; off in dev). Applies to the
+# Deployment or the Rollout via scaleTargetRef (atlas-docs/04 §4.2).
+autoscaling:
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: 80
+
+# Pod Disruption Budget — keep capacity during voluntary disruptions.
+podDisruptionBudget:
+  enabled: false
+  minAvailable: 1
+
+# Probes hit /healthz (app/main.py). Startup probe gives slow cold starts room
+# before liveness begins; readiness gates traffic.
+probes:
+  path: /healthz
+  startup:
+    failureThreshold: 30
+    periodSeconds: 5
+  liveness:
+    initialDelaySeconds: 10
+    periodSeconds: 15
+    timeoutSeconds: 3
+    failureThreshold: 3
+  readiness:
+    initialDelaySeconds: 5
+    periodSeconds: 10
+    timeoutSeconds: 3
+    failureThreshold: 3
+
+# Hardened pod/container security context (non-root, read-only rootfs).
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  fsGroup: 10001
+  seccompProfile:
+    type: RuntimeDefault
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+
+# Prometheus/OTel scrape target. Enable when the metrics endpoint is exposed.
+serviceMonitor:
+  enabled: false
+  path: /metrics
+  interval: 30s
+
+nodeSelector: {}
+tolerations: []
+affinity: {}

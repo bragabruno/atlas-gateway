@@ -1,0 +1,36 @@
+# atlas-gateway/deploy/values-dev.yaml — dev overrides (atlas-docs/04 §4.2, §4.3).
+# One replica, small SKUs, plain Deployment (no canary/HPA/PDB) — the AKS dev
+# namespace loop (`make cloud-up ENV=dev` in atlas-infra).
+
+replicaCount: 1
+
+image:
+  pullPolicy: Always # dev tags are mutable; always re-pull
+
+# Plain Deployment in dev — canary is a prod concern.
+canary:
+  enabled: false
+
+autoscaling:
+  enabled: false
+
+podDisruptionBudget:
+  enabled: false
+
+resources:
+  requests:
+    cpu: "100m"
+    memory: "128Mi"
+  limits:
+    cpu: "500m"
+    memory: "512Mi"
+
+secrets:
+  keyVaultName: "kv-atlas-dev"
+  # tenantId / userAssignedIdentityID injected by Terraform output in CI.
+
+kafka:
+  bootstrapServers: "atlas-kafka-bootstrap.atlas-dev.svc:9092"
+
+serviceMonitor:
+  enabled: false

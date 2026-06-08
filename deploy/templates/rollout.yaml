@@ -1,0 +1,29 @@
+{{- /*
+Argo Rollouts canary spec — rendered only when canary is ON (prod). Replaces the
+Deployment and drives a 10% → SLO-check → 50% → SLO-check progression with no
+auto-promotion; AnalysisTemplate failures roll back to the last stable revision
+(atlas-docs/04 §5.4). The pod template is shared with the Deployment via the
+atlas-gateway.podSpec helper so the two paths never drift.
+*/ -}}
+{{- if .Values.canary.enabled }}
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
+metadata:
+  name: {{ include "atlas-gateway.fullname" . }}
+  labels:
+    {{- include "atlas-gateway.labels" . | nindent 4 }}
+spec:
+  {{- if not .Values.autoscaling.enabled }}
+  replicas: {{ .Values.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "atlas-gateway.selectorLabels" . | nindent 6 }}
+  template:
+    {{- include "atlas-gateway.podSpec" . | nindent 4 }}
+  strategy:
+    canary:
+      autoPromotionEnabled: {{ .Values.canary.autoPromotionEnabled }}
+      steps:
+        {{- toYaml .Values.canary.steps | nindent 8 }}
+{{- end }}

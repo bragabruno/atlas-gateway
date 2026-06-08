@@ -21,8 +21,9 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 import sqlalchemy as sa
-from alembic import op
 from sqlalchemy.dialects import postgresql
+
+from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "cb474b300c35"
@@ -103,13 +104,9 @@ def upgrade() -> None:
             nullable=False,
             server_default=sa.text("now()"),
         ),
-        sa.UniqueConstraint(
-            "prompt_id", "semver", name="prompt_versions_semver_unique"
-        ),
+        sa.UniqueConstraint("prompt_id", "semver", name="prompt_versions_semver_unique"),
     )
-    op.create_index(
-        "idx_prompt_versions_prompt_id", "prompt_versions", ["prompt_id"]
-    )
+    op.create_index("idx_prompt_versions_prompt_id", "prompt_versions", ["prompt_id"])
     op.create_index("idx_prompt_versions_status", "prompt_versions", ["status"])
 
 

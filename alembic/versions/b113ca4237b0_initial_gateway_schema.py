@@ -17,9 +17,9 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 import sqlalchemy as sa
-from alembic import op
 from sqlalchemy.dialects import postgresql
 
+from alembic import op
 from app.repositories.seed import ALIAS_SEED
 
 # revision identifiers, used by Alembic.
@@ -179,12 +179,8 @@ def upgrade() -> None:
         ),
         sa.Column("model", sa.Text(), nullable=False),
         sa.Column("provider", provider_enum, nullable=False),
-        sa.Column(
-            "input_tokens", sa.Integer(), nullable=False, server_default=sa.text("0")
-        ),
-        sa.Column(
-            "output_tokens", sa.Integer(), nullable=False, server_default=sa.text("0")
-        ),
+        sa.Column("input_tokens", sa.Integer(), nullable=False, server_default=sa.text("0")),
+        sa.Column("output_tokens", sa.Integer(), nullable=False, server_default=sa.text("0")),
         sa.Column(
             "cache_creation_input_tokens",
             sa.Integer(),

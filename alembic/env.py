@@ -14,11 +14,11 @@ from __future__ import annotations
 import os
 from logging.config import fileConfig
 
-from alembic import context
 from sqlalchemy import engine_from_config, pool
 
-from app.repositories.base import Base
+from alembic import context
 from app.repositories import tables  # noqa: F401  (registers models on Base.metadata)
+from app.repositories.base import Base
 
 config = context.config
 
@@ -40,9 +40,7 @@ def _database_url() -> str:
         return env_url
     ini_url = config.get_main_option("sqlalchemy.url")
     if not ini_url:
-        raise RuntimeError(
-            "ATLAS_DATABASE_URL is not set and no sqlalchemy.url is configured."
-        )
+        raise RuntimeError("ATLAS_DATABASE_URL is not set and no sqlalchemy.url is configured.")
     return ini_url
 
 

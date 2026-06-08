@@ -1,0 +1,65 @@
+# Bitbucket Pipelines — atlas-gateway (INF-2, Gate 1 + XCUT-4 + XCUT-6).
+#
+# Gate 1 (Correctness): ruff -> pyright --strict -> pytest (offline, zero API spend).
+# XCUT-4: dep_audit.py fails on any unpinned / <14-day-old dependency.
+# XCUT-6: validate_diagrams.sh validates Mermaid + PlantUML diagrams.
+#
+# Image pinned exactly (atlas-docs/02 §2). Auth, where needed, is OIDC / repo
+# secrets referenced by name only — no secret values in this file.
+
+image: python:3.12.13-slim-bookworm  # 3.12.13 (2026-03-03)
+
+definitions:
+  caches:
+    pip-cache: ~/.cache/pip
+
+  steps:
+    - step: &dep-audit
+        name: "XCUT-4 — Dependency + age audit"
+        caches: [pip-cache]
+        script:
+          - python scripts/dep_audit.py --min-age-days 14
+
+    - step: &lint-typecheck
+        name: "Gate 1a — Lint & Typecheck"
+        caches: [pip-cache]
+        script:
+          - pip install --quiet -e ".[dev]"
+          - ruff check .
+          - ruff format --check .
+          - pyright
+
+    - step: &unit-tests
+        name: "Gate 1b — Unit Tests (zero API spend)"
+        caches: [pip-cache]
+        script:
+          - pip install --quiet -e ".[dev]"
+          # Offline: MockProvider + fakeredis; no live PG/Redis/LLM calls.
+          - pytest -q
+
+    - step: &diagram-validation
+        name: "XCUT-6 — Diagram validation"
+        image: node:22.22.2-bookworm-slim  # 22.22.2 (2026-03-24)
+        script:
+          # JRE for PlantUML + Chromium deps for mermaid-cli headless render.
+          - apt-get update && apt-get install -y --no-install-recommends
+              default-jre-headless chromium fonts-liberation
+          # Pinned PlantUML jar (1.2026.3, 2026-05-08) from the GitHub release.
+          - export PLANTUML_VERSION=1.2026.3
+          - curl -fsSL -o /tmp/plantuml.jar
+              "https://github.com/plantuml/plantuml/releases/download/v${PLANTUML_VERSION}/plantuml-${PLANTUML_VERSION}.jar"
+          - export PLANTUML_JAR=/tmp/plantuml.jar
+          # mermaid-cli (11.14.0) runs headless via the system Chromium.
+          - export PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
+          - printf '{"args":["--no-sandbox"]}' > /tmp/puppeteer.json
+          - export PUPPETEER_CONFIG=/tmp/puppeteer.json
+          - bash scripts/validate_diagrams.sh docs/diagrams
+
+pipelines:
+  pull-requests:
+    "**":
+      - parallel:
+          - step: *dep-audit
+          - step: *lint-typecheck
+          - step: *unit-tests
+          - step: *diagram-validation

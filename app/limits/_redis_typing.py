@@ -44,6 +44,20 @@ class TxnPipe(Protocol):
         ...
 
 
+def create_redis_client(url: str, *, decode_responses: bool = True) -> redis_async.Redis:
+    """Construct a `redis.asyncio.Redis` from a URL, typed concretely.
+
+    ``redis.asyncio.Redis.from_url`` is typed with ``**kwargs: Unknown``, which
+    pyright strict reports as a partially unknown member. Confining that one
+    suppression here (the same idiom as the rest of this module) keeps the
+    composition root fully typed; the returned client is the real `Redis`.
+    """
+    client: redis_async.Redis = redis_async.Redis.from_url(  # type: ignore[reportUnknownMemberType]
+        url, decode_responses=decode_responses
+    )
+    return client
+
+
 async def run_transaction(
     client: redis_async.Redis,
     func: Callable[[TxnPipe], Awaitable[None]],

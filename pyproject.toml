@@ -39,6 +39,7 @@ dev = [
     "httpx==0.28.1",
     "pyright==1.1.394",
     "fakeredis==2.35.1",
+    "pyyaml==6.0.2",  # scripts/dep_audit.py uses it to audit .trunk/trunk.yaml pins
 ]
 
 [tool.ruff]

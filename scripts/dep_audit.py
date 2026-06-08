@@ -12,6 +12,11 @@ table: ``dependencies`` + every ``optional-dependencies`` group). It exits
 non-zero if any dependency violates either rule, printing one line per
 violation so CI logs are actionable.
 
+It ALSO audits ``.trunk/trunk.yaml`` (when present): every version-bearing
+entry (``cli.version``, ``plugins.sources[].ref``, ``runtimes.enabled[]``,
+``lint.enabled[]``) must be pinned, and the Trunk-managed ruff pin is
+additionally age-checked against the same ``--min-age-days`` floor.
+
 Network use
 -----------
 The age check queries ``https://pypi.org/pypi/<name>/json`` (read-only, no
@@ -104,6 +109,80 @@ def collect_dependencies(pyproject_path: Path) -> list[str]:
                 requirements.extend(str(item) for item in group_list)
 
     return requirements
+
+
+def collect_trunk_pins(trunk_path: Path) -> list[tuple[str, str]]:
+    """Return (label, version) for every version-bearing entry in .trunk/trunk.yaml.
+
+    Covers cli.version, plugins.sources[].ref, runtimes.enabled[], lint.enabled[].
+    Entries use 'name@version'; a bare entry (no '@') yields an empty version so
+    the pin check flags it. (We enable no versionless Trunk built-ins.)
+    """
+    import yaml  # pyyaml is a declared project dependency
+
+    with trunk_path.open("rb") as handle:
+        loaded: Any = yaml.safe_load(handle)
+    data: dict[str, Any] = loaded if isinstance(loaded, dict) else {}
+
+    pins: list[tuple[str, str]] = []
+
+    cli = data.get("cli")
+    if isinstance(cli, dict):
+        cli_table: dict[str, Any] = cli
+        pins.append(("cli", str(cli_table.get("version", ""))))
+
+    plugins = data.get("plugins")
+    if isinstance(plugins, dict):
+        plugins_table: dict[str, Any] = plugins
+        sources: list[Any] = plugins_table.get("sources", []) or []
+        for src in sources:
+            if isinstance(src, dict):
+                src_table: dict[str, Any] = src
+                pins.append((f"plugin:{src_table.get('id', '?')}", str(src_table.get("ref", ""))))
+
+    for section in ("runtimes", "lint"):
+        node = data.get(section)
+        if isinstance(node, dict):
+            node_table: dict[str, Any] = node
+            enabled: list[Any] = node_table.get("enabled", []) or []
+            for item in enabled:
+                name, _, ver = str(item).partition("@")
+                pins.append((f"{section}:{name}", ver))
+
+    return pins
+
+
+def audit_trunk(
+    trunk_path: Path,
+    *,
+    min_age_days: int,
+    offline: bool,
+    now: datetime | None = None,
+) -> list[str]:
+    """Audit .trunk/trunk.yaml: every tool pinned; ruff additionally age-checked."""
+    current_time = now or datetime.now(UTC)
+    violations: list[str] = []
+
+    for label, version in collect_trunk_pins(trunk_path):
+        if not version:
+            violations.append(f"PIN: trunk {label} is not pinned to an exact version")
+            continue
+        # Only ruff is resolvable on PyPI; Trunk's other tools come from Trunk's
+        # CDN / GitHub and cannot be PyPI-age-checked here.
+        if label == "lint:ruff" and not offline:
+            try:
+                uploaded = _fetch_upload_date("ruff", version)
+            except DependencyError as exc:
+                violations.append(f"AGE: {exc}")
+                continue
+            age_days = (current_time - uploaded).days
+            if age_days < min_age_days:
+                violations.append(
+                    f"AGE: ruff=={version} (Trunk) is {age_days}d old "
+                    f"(< {min_age_days}d floor; uploaded {uploaded.date().isoformat()})"
+                )
+
+    return violations
 
 
 def _fetch_upload_date(name: str, version: str) -> datetime:
@@ -227,6 +306,16 @@ def main(argv: list[str] | None = None) -> int:
     except DependencyError as exc:
         print(f"dep_audit.py: error: {exc}", file=sys.stderr)
         return 2
+
+    trunk_path = pyproject_path.parent / ".trunk" / "trunk.yaml"
+    if trunk_path.is_file():
+        try:
+            violations.extend(
+                audit_trunk(trunk_path, min_age_days=args.min_age_days, offline=args.offline)
+            )
+        except DependencyError as exc:
+            print(f"dep_audit.py: error: {exc}", file=sys.stderr)
+            return 2
 
     if violations:
         print(f"dep_audit.py: {len(violations)} violation(s) in {pyproject_path}:")

@@ -7,6 +7,7 @@ OpenAI-compatible LLM Gateway for the Atlas platform. Routes chat, embedding, an
 - Python 3.12
 - PostgreSQL, Redis, Qdrant, Kafka (see `atlas-docs` for infrastructure context)
 - All pinned dependencies ≥ 14 days old; no secrets in code or images (env-var placeholders only)
+- `trunk` on PATH for generating Alembic migrations: `alembic.ini` `[post_write_hooks]` runs `trunk check --fix` on each new revision, so `alembic revision` fails if `trunk` is not installed.
 
 ## Endpoints
 

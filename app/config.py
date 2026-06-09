@@ -37,6 +37,13 @@ class Settings(BaseSettings):
     budget_enabled: bool = False
     guardrails_enabled: bool = False
 
+    #: Browser origins allowed to call the gateway via CORS (e.g. the Atlas
+    #: frontend SPA). Empty (default) adds **no** CORS middleware — byte-for-byte
+    #: the pre-CORS behaviour, same config-gated/default-OFF philosophy as above.
+    #: Set ATLAS_CORS_ALLOW_ORIGINS (JSON list) to enable, e.g.
+    #: ``["http://localhost:8080"]`` for the local compose frontend.
+    cors_allow_origins: tuple[str, ...] = ()
+
 
 def get_settings() -> Settings:
     return Settings()

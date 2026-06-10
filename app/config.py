@@ -49,6 +49,13 @@ class Settings(BaseSettings):
     #: ``["http://localhost:8080"]`` for the local compose frontend.
     cors_allow_origins: tuple[str, ...] = ()
 
+    #: Provider API keys — sourced from Key Vault via CSI in real deployments,
+    #: set as env vars locally. A ``None`` value means that provider is absent;
+    #: the registry will only wire providers whose keys are present (GW-3/4/5).
+    anthropic_api_key: str | None = None
+    openai_api_key: str | None = None
+    google_api_key: str | None = None
+
 
 def get_settings() -> Settings:
     return Settings()

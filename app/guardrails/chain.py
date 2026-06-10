@@ -10,8 +10,11 @@ Defines the contracts and runner for pre/post guardrails:
 - `GuardrailRejection` — the explicit, documented failure raised when a check
   rejects; the chain is fail-fast, so the first rejection stops the chain.
 
-This is a pure-Python capability adapter (no external deps); wiring it into the
-chat request path is a separate ticket. See ADR-016.
+GRD-11: `GuardrailChain` records one OTel counter increment per check
+(`atlas.guardrail.checks`) with attributes `guardrail.name` and
+`guardrail.outcome` (pass | block). The `MeterProvider` is injected (defaults
+to the global provider) so tests can pass an `InMemoryMetricReader` and assert
+on the recorded data points entirely offline.
 """
 
 from __future__ import annotations
@@ -20,7 +23,16 @@ from collections.abc import Sequence
 from enum import Enum
 from typing import Protocol, runtime_checkable
 
+from opentelemetry import metrics
+from opentelemetry.metrics import Counter, MeterProvider
+
 from app.domain.messages import ChatResult, Message
+
+#: OTel instrumentation scope name for guardrail metrics.
+_SCOPE = "atlas.gateway.guardrails"
+
+#: Single counter for all guardrail outcomes; use attributes to fan out.
+_METRIC_CHECKS = "atlas.guardrail.checks"
 
 
 class GuardrailPhase(str, Enum):
@@ -93,6 +105,9 @@ class GuardrailChain:
     before the provider call (over the request); `run_post` executes it after
     (over the request + result). The chain is fail-fast: the first
     `GuardrailRejection` propagates and stops the remaining checks.
+
+    GRD-11: every check increments `atlas.guardrail.checks` with
+    `guardrail.name=<name>` and `guardrail.outcome=pass|block`.
     """
 
     def __init__(
@@ -100,9 +115,17 @@ class GuardrailChain:
         *,
         pre: Sequence[Guardrail] = (),
         post: Sequence[Guardrail] = (),
+        meter_provider: MeterProvider | None = None,
     ) -> None:
         self._pre: tuple[Guardrail, ...] = tuple(pre)
         self._post: tuple[Guardrail, ...] = tuple(post)
+        mp = meter_provider or metrics.get_meter_provider()
+        meter = mp.get_meter(_SCOPE)
+        self._counter: Counter = meter.create_counter(
+            _METRIC_CHECKS,
+            unit="1",
+            description="Number of guardrail check executions by name and outcome.",
+        )
 
     @property
     def pre(self) -> tuple[Guardrail, ...]:
@@ -116,17 +139,23 @@ class GuardrailChain:
 
     async def run_pre(self, ctx: GuardrailContext) -> None:
         """Run the pre-phase checks in order over the inbound request."""
-        await self._run(self._pre, GuardrailPhase.PRE, ctx)
+        await self._run(self._pre, GuardrailPhase.PRE, ctx, self._counter)
 
     async def run_post(self, ctx: GuardrailContext) -> None:
         """Run the post-phase checks in order over the provider result."""
-        await self._run(self._post, GuardrailPhase.POST, ctx)
+        await self._run(self._post, GuardrailPhase.POST, ctx, self._counter)
 
     @staticmethod
     async def _run(
         guardrails: Sequence[Guardrail],
         phase: GuardrailPhase,
         ctx: GuardrailContext,
+        counter: Counter,
     ) -> None:
         for guardrail in guardrails:
-            await guardrail.check(ctx)
+            try:
+                await guardrail.check(ctx)
+            except GuardrailRejection:
+                counter.add(1, {"guardrail.name": guardrail.name, "guardrail.outcome": "block"})
+                raise
+            counter.add(1, {"guardrail.name": guardrail.name, "guardrail.outcome": "pass"})

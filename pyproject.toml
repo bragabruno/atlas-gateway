@@ -19,6 +19,7 @@ dependencies = [
     "opentelemetry-api==1.42.1",
     "opentelemetry-sdk==1.42.1",
     "opentelemetry-semantic-conventions==0.63b1",
+    "qdrant-client==1.18.0",        # POL-1 — semantic cache; released 2026-05-11 (>14d)
 ]
 
 [tool.setuptools.packages.find]

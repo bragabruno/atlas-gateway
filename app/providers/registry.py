@@ -43,6 +43,13 @@ class ProviderRegistry:
                       "text-embedding-3-small", "text-embedding-3-large",
                       "text-embedding-ada-002"]:
                 providers[m] = p
+        # Local Ollama (OpenAI-compatible): one provider at ollama_base_url, keyed
+        # by each served model id. No API key is required — Ollama ignores it, but
+        # the OpenAI SDK demands a non-empty string, so a placeholder is passed.
+        if base_url := getattr(settings, "ollama_base_url", None):
+            ollama = OpenAIProvider(api_key="ollama", base_url=base_url)
+            for m in getattr(settings, "ollama_models", ()) or ():
+                providers[m] = ollama
         if key := getattr(settings, "google_api_key", None):
             try:
                 from app.providers.google_provider import GoogleProvider as _GP

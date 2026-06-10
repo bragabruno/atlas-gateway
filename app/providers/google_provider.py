@@ -88,7 +88,7 @@ class GoogleProvider:
             ),
         )
 
-    async def chat_stream(
+    def chat_stream(
         self,
         *,
         model: str,
@@ -96,6 +96,8 @@ class GoogleProvider:
         max_tokens: int | None = None,
         temperature: float | None = None,
     ) -> AsyncIterator[StreamDelta]:
+        # NOT `async def` — see OpenAIProvider.chat_stream: calling it must
+        # return the async iterator directly, not a coroutine.
         return self._stream(
             model=model,
             messages=messages,

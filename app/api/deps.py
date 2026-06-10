@@ -152,6 +152,21 @@ def get_embeddings_service(
     return EmbeddingsService(registry)
 
 
+async def get_db_pool(
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> object | None:
+    """Return an asyncpg Pool when ATLAS_DB_URL is configured, else None.
+
+    Imports asyncpg lazily so it is only required when a real DB is wired; tests
+    and the default env (no DB_URL) never touch asyncpg.
+    """
+    if settings.db_url is None:
+        return None
+    import asyncpg  # type: ignore[import-untyped]
+
+    return await asyncpg.create_pool(settings.db_url)
+
+
 def require_api_key(
     settings: Annotated[Settings, Depends(get_settings)],
     authorization: Annotated[str | None, Header()] = None,

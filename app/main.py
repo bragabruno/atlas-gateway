@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.v1.chat import router as chat_router
 from app.api.v1.embeddings import router as embeddings_router
 from app.api.v1.models import router as models_router
+from app.api.v1.usage import router as usage_router
 from app.config import get_settings
 
 app = FastAPI(title="Atlas Gateway", version="0.1.0")
@@ -29,6 +30,7 @@ if _cors_origins:
 app.include_router(chat_router)
 app.include_router(models_router)
 app.include_router(embeddings_router)
+app.include_router(usage_router)
 
 
 @app.get("/healthz")

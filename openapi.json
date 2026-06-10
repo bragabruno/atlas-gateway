@@ -248,6 +248,61 @@
         "title": "ModelList",
         "type": "object"
       },
+      "UsageResponse": {
+        "properties": {
+          "rows": {
+            "items": {
+              "$ref": "#/components/schemas/UsageRow"
+            },
+            "title": "Rows",
+            "type": "array"
+          },
+          "since": {
+            "format": "date",
+            "title": "Since",
+            "type": "string"
+          }
+        },
+        "required": [
+          "since",
+          "rows"
+        ],
+        "title": "UsageResponse",
+        "type": "object"
+      },
+      "UsageRow": {
+        "properties": {
+          "app": {
+            "title": "App",
+            "type": "string"
+          },
+          "input_tokens": {
+            "title": "Input Tokens",
+            "type": "integer"
+          },
+          "model": {
+            "title": "Model",
+            "type": "string"
+          },
+          "output_tokens": {
+            "title": "Output Tokens",
+            "type": "integer"
+          },
+          "total_cost_usd": {
+            "title": "Total Cost Usd",
+            "type": "string"
+          }
+        },
+        "required": [
+          "app",
+          "model",
+          "input_tokens",
+          "output_tokens",
+          "total_cost_usd"
+        ],
+        "title": "UsageRow",
+        "type": "object"
+      },
       "ValidationError": {
         "properties": {
           "loc": {
@@ -465,6 +520,69 @@
           }
         },
         "summary": "List Models"
+      }
+    },
+    "/v1/usage": {
+      "get": {
+        "operationId": "get_usage_v1_usage_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "since",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Since"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UsageResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Usage"
       }
     }
   }

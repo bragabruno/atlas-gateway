@@ -43,7 +43,11 @@ from app.services.chat_service import (
 from app.services.embeddings_service import EmbeddingsService
 from app.services.models_service import ModelsService
 
-_registry = ProviderRegistry()
+#: Process-wide provider registry, built from runtime config so configured
+#: providers (OpenAI/Anthropic/Google, and a local Ollama endpoint) are wired.
+#: With no keys / no ollama_base_url this is mock-only — byte-for-byte the prior
+#: default — so the test/offline path is unchanged.
+_registry = ProviderRegistry.from_settings(get_settings())
 
 #: Default rate-limit bucket when the limiter is enabled (burst / sustained).
 _RATE_CAPACITY = 60

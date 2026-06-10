@@ -56,6 +56,15 @@ class Settings(BaseSettings):
     openai_api_key: str | None = None
     google_api_key: str | None = None
 
+    #: Local Ollama (OpenAI-compatible) endpoint. When set, the registry wires an
+    #: OpenAI-protocol provider at this base URL — no API key needed (Ollama
+    #: ignores it). Example (gateway-in-Docker → host Ollama):
+    #: ``http://host.docker.internal:11434/v1``. ``ollama_models`` are the model
+    #: ids served (e.g. ``["gpt-oss:120b-cloud"]``); each is registered so a
+    #: chat request for that id routes to Ollama instead of the mock provider.
+    ollama_base_url: str | None = None
+    ollama_models: tuple[str, ...] = ()
+
 
 def get_settings() -> Settings:
     return Settings()

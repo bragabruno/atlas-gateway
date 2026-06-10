@@ -113,6 +113,19 @@ class TestOpenAIProvider:
         with pytest.raises(TransientProviderError):
             await provider.chat(model="gpt-4o", messages=_MESSAGES)
 
+    def test_chat_stream_returns_async_iterator_not_coroutine(self) -> None:
+        """Calling chat_stream must return an async iterator directly.
+
+        The service does ``async for delta in provider.chat_stream(...)`` without
+        awaiting, so an ``async def`` that *returns* the generator (yielding a
+        coroutine) breaks streaming with 'async for requires __aiter__'.
+        """
+        import asyncio
+
+        stream = self._provider().chat_stream(model="gpt-4o", messages=_MESSAGES)
+        assert not asyncio.iscoroutine(stream)
+        assert hasattr(stream, "__aiter__")
+
 
 # ---------------------------------------------------------------------------
 # ProviderRegistry.from_settings
@@ -151,3 +164,20 @@ def test_registry_from_settings_wires_openai_models() -> None:
     embed_provider = registry.resolve("text-embedding-3-small")
     assert embed_provider is not None
     assert embed_provider.name == "openai"
+
+
+def test_registry_from_settings_wires_ollama_models() -> None:
+    settings = SimpleNamespace(
+        anthropic_api_key=None,
+        openai_api_key=None,
+        google_api_key=None,
+        ollama_base_url="http://host.docker.internal:11434/v1",
+        ollama_models=("gpt-oss:120b-cloud", "kimi-k2.5:cloud"),
+    )
+    registry = ProviderRegistry.from_settings(settings)
+    # Each configured Ollama model id resolves to an OpenAI-protocol provider...
+    assert registry.resolve("gpt-oss:120b-cloud") is not None
+    assert registry.resolve("gpt-oss:120b-cloud").name == "openai"
+    assert registry.resolve("kimi-k2.5:cloud") is not None
+    # ...and the mock fallback is still present.
+    assert registry.resolve("mock") is not None

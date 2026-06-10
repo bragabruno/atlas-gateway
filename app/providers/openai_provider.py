@@ -64,7 +64,7 @@ class OpenAIProvider:
             ),
         )
 
-    async def chat_stream(
+    def chat_stream(
         self,
         *,
         model: str,
@@ -72,6 +72,10 @@ class OpenAIProvider:
         max_tokens: int | None = None,
         temperature: float | None = None,
     ) -> AsyncIterator[StreamDelta]:
+        # NOT `async def`: the protocol contract is that calling chat_stream
+        # returns an async iterator directly (the service does `async for delta
+        # in provider.chat_stream(...)` without awaiting). An `async def` that
+        # returns the generator would yield a coroutine and break `async for`.
         return self._stream(
             model=model,
             messages=messages,

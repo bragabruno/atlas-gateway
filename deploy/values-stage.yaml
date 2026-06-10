@@ -1,0 +1,42 @@
+# atlas-gateway/deploy/values-stage.yaml — stage overrides (atlas-docs/04 §4.2, §5.4).
+# Pre-prod: prod-like topology (canary, HPA, PDB) at reduced scale, for
+# validation before prod. Sits between values-dev.yaml and values-prod.yaml.
+
+replicaCount: 2
+
+image:
+  pullPolicy: IfNotPresent
+
+# Argo Rollouts canary on in stage to validate the rollout path before prod —
+# steps/analysis come from the chart defaults (10% → SLO check → 50% → SLO check).
+canary:
+  enabled: true
+
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 8
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: 80
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+resources:
+  requests:
+    cpu: "250m"
+    memory: "256Mi"
+  limits:
+    cpu: "1000m"
+    memory: "1Gi"
+
+secrets:
+  keyVaultName: "kv-atlas-stage"
+  # tenantId / userAssignedIdentityID injected by Terraform output in CI.
+
+kafka:
+  bootstrapServers: "atlas-kafka-bootstrap.atlas-stage.svc:9092"
+
+serviceMonitor:
+  enabled: true

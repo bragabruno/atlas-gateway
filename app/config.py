@@ -37,6 +37,11 @@ class Settings(BaseSettings):
     budget_enabled: bool = False
     guardrails_enabled: bool = False
 
+    #: PostgreSQL DSN for the gateway DB (call_records etc.).  ``None`` disables
+    #: the DB-backed usage endpoint; a real deployment sets ATLAS_DB_URL from
+    #: Key Vault.
+    db_url: str | None = None
+
     #: Browser origins allowed to call the gateway via CORS (e.g. the Atlas
     #: frontend SPA). Empty (default) adds **no** CORS middleware — byte-for-byte
     #: the pre-CORS behaviour, same config-gated/default-OFF philosophy as above.

@@ -31,14 +31,11 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import json
 import os
-import statistics
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 import httpx
-
 
 # ---------------------------------------------------------------------------
 # Config
@@ -85,13 +82,14 @@ class LoadReport:
 
     def print(self) -> None:
         status = "PASS" if self.passed else "FAIL"
+        pct = 100 * self.successes // max(self.total_requests, 1)
         print(
-            f"\n{'='*60}\n"
+            f"\n{'=' * 60}\n"
             f"Atlas Gateway Load Test — {status}\n"
-            f"{'='*60}\n"
+            f"{'=' * 60}\n"
             f"  Duration:       {self.duration_s}s  @  {self.target_rps} RPS target\n"
             f"  Total requests: {self.total_requests}\n"
-            f"  Successes:      {self.successes}  ({100*self.successes//max(self.total_requests,1)}%)\n"
+            f"  Successes:      {self.successes}  ({pct}%)\n"
             f"  Errors:         {self.errors}\n"
             f"\n"
             f"  Latency (ms):\n"
@@ -99,7 +97,7 @@ class LoadReport:
             f"    p95:  {self.p95_ms:.1f}  (limit: {self.p95_limit_ms} ms)\n"
             f"    p99:  {self.p99_ms:.1f}\n"
             f"    max:  {self.max_ms:.1f}\n"
-            f"{'='*60}\n"
+            f"{'=' * 60}\n"
         )
 
 
@@ -235,12 +233,25 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Atlas gateway load test")
     parser.add_argument("--url", default=os.environ.get("ATLAS_LOAD_URL", _DEFAULT_URL))
     parser.add_argument("--key", default=os.environ.get("ATLAS_LOAD_KEY", _DEFAULT_KEY))
-    parser.add_argument("--rps", type=int, default=int(os.environ.get("ATLAS_LOAD_RPS", str(_DEFAULT_RPS))))
-    parser.add_argument("--duration", type=int, default=int(os.environ.get("ATLAS_LOAD_DURATION", str(_DEFAULT_DURATION))))
-    parser.add_argument("--p95-limit-ms", type=float, default=float(os.environ.get("ATLAS_LOAD_P95_LIMIT", str(_DEFAULT_P95_LIMIT_MS))))
+    parser.add_argument(
+        "--rps", type=int, default=int(os.environ.get("ATLAS_LOAD_RPS", str(_DEFAULT_RPS)))
+    )
+    parser.add_argument(
+        "--duration",
+        type=int,
+        default=int(os.environ.get("ATLAS_LOAD_DURATION", str(_DEFAULT_DURATION))),
+    )
+    parser.add_argument(
+        "--p95-limit-ms",
+        type=float,
+        default=float(os.environ.get("ATLAS_LOAD_P95_LIMIT", str(_DEFAULT_P95_LIMIT_MS))),
+    )
     args = parser.parse_args()
 
-    print(f"Load test: {args.url}  rps={args.rps}  duration={args.duration}s  p95_limit={args.p95_limit_ms}ms")
+    print(
+        f"Load test: {args.url}  rps={args.rps}  "
+        f"duration={args.duration}s  p95_limit={args.p95_limit_ms}ms"
+    )
 
     report = asyncio.run(
         _run_load_collecting(args.url, args.key, args.rps, args.duration, args.p95_limit_ms)
@@ -251,4 +262,5 @@ def main() -> int:
 
 if __name__ == "__main__":
     import sys
+
     sys.exit(main())

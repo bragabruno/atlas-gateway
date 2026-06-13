@@ -11,8 +11,11 @@ See ADR-012 for the provider protocol and ADR-016 for the adapter pattern.
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+from typing import cast
 
 import openai
+from openai import omit
+from openai.types.chat import ChatCompletionMessageParam
 
 from app.domain.messages import ChatResult, EmbeddingResult, Message, StreamDelta, Usage
 from app.resilience.retry import TransientProviderError
@@ -20,6 +23,18 @@ from app.resilience.retry import TransientProviderError
 
 def _is_transient(exc: openai.APIStatusError) -> bool:
     return exc.status_code in {429, 500, 502, 503, 504}
+
+
+def _to_openai_messages(messages: list[Message]) -> list[ChatCompletionMessageParam]:
+    """Adapt domain Messages to the SDK's typed message-param union.
+
+    Our `Message.role` is constrained to the OpenAI roles, so the runtime
+    shape matches `ChatCompletionMessageParam` (a union of TypedDicts); the
+    cast pins that at the SDK boundary without weakening the call's types.
+    """
+    return [
+        cast(ChatCompletionMessageParam, {"role": m.role, "content": m.content}) for m in messages
+    ]
 
 
 class OpenAIProvider:
@@ -38,16 +53,13 @@ class OpenAIProvider:
         max_tokens: int | None = None,
         temperature: float | None = None,
     ) -> ChatResult:
-        kwargs: dict = {
-            "model": model,
-            "messages": [{"role": m.role, "content": m.content} for m in messages],
-        }
-        if max_tokens is not None:
-            kwargs["max_tokens"] = max_tokens
-        if temperature is not None:
-            kwargs["temperature"] = temperature
         try:
-            resp = await self._client.chat.completions.create(**kwargs)
+            resp = await self._client.chat.completions.create(
+                model=model,
+                messages=_to_openai_messages(messages),
+                max_tokens=max_tokens if max_tokens is not None else omit,
+                temperature=temperature if temperature is not None else omit,
+            )
         except openai.APIStatusError as exc:
             if _is_transient(exc):
                 raise TransientProviderError(str(exc)) from exc
@@ -91,18 +103,15 @@ class OpenAIProvider:
         max_tokens: int | None = None,
         temperature: float | None = None,
     ) -> AsyncIterator[StreamDelta]:
-        kwargs: dict = {
-            "model": model,
-            "messages": [{"role": m.role, "content": m.content} for m in messages],
-            "stream": True,
-            "stream_options": {"include_usage": True},
-        }
-        if max_tokens is not None:
-            kwargs["max_tokens"] = max_tokens
-        if temperature is not None:
-            kwargs["temperature"] = temperature
         try:
-            async with await self._client.chat.completions.create(**kwargs) as stream:
+            async with await self._client.chat.completions.create(
+                model=model,
+                messages=_to_openai_messages(messages),
+                stream=True,
+                stream_options={"include_usage": True},
+                max_tokens=max_tokens if max_tokens is not None else omit,
+                temperature=temperature if temperature is not None else omit,
+            ) as stream:
                 async for chunk in stream:
                     choice = chunk.choices[0] if chunk.choices else None
                     if choice and choice.delta.content:

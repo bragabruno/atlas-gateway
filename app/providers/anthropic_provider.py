@@ -13,8 +13,11 @@ See ADR-012 for the provider protocol and ADR-016 for the adapter pattern.
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+from typing import cast
 
 import anthropic
+from anthropic import omit
+from anthropic.types import MessageParam, TextBlock
 
 from app.domain.messages import ChatResult, EmbeddingResult, Message, StreamDelta, Usage
 from app.resilience.retry import TransientProviderError
@@ -30,8 +33,13 @@ _MODELS = [
 ]
 
 
-def _to_anthropic_messages(messages: list[Message]) -> list[dict[str, str]]:
-    return [{"role": m.role, "content": m.content} for m in messages]
+def _to_anthropic_messages(messages: list[Message]) -> list[MessageParam]:
+    """Adapt domain Messages to the SDK's typed `MessageParam` list.
+
+    Anthropic accepts only `user`/`assistant` roles; the runtime shape matches
+    `MessageParam`, and the cast pins that at the SDK boundary.
+    """
+    return [cast(MessageParam, {"role": m.role, "content": m.content}) for m in messages]
 
 
 def _is_transient(exc: anthropic.APIStatusError) -> bool:
@@ -54,20 +62,21 @@ class AnthropicProvider:
         max_tokens: int | None = None,
         temperature: float | None = None,
     ) -> ChatResult:
-        kwargs: dict = {
-            "model": model,
-            "messages": _to_anthropic_messages(messages),
-            "max_tokens": max_tokens or 1024,
-        }
-        if temperature is not None:
-            kwargs["temperature"] = temperature
         try:
-            resp = await self._client.messages.create(**kwargs)
+            resp = await self._client.messages.create(
+                model=model,
+                messages=_to_anthropic_messages(messages),
+                max_tokens=max_tokens or 1024,
+                temperature=temperature if temperature is not None else omit,
+            )
         except anthropic.APIStatusError as exc:
             if _is_transient(exc):
                 raise TransientProviderError(str(exc)) from exc
             raise
-        content = resp.content[0].text if resp.content else ""
+        # resp.content is a union of block types (text/thinking/tool_use/…);
+        # only TextBlock carries `.text`, so narrow before reading it.
+        first = resp.content[0] if resp.content else None
+        content = first.text if isinstance(first, TextBlock) else ""
         return ChatResult(
             model=resp.model,
             content=content,
@@ -103,15 +112,13 @@ class AnthropicProvider:
         max_tokens: int | None = None,
         temperature: float | None = None,
     ) -> AsyncIterator[StreamDelta]:
-        kwargs: dict = {
-            "model": model,
-            "messages": _to_anthropic_messages(messages),
-            "max_tokens": max_tokens or 1024,
-        }
-        if temperature is not None:
-            kwargs["temperature"] = temperature
         try:
-            async with self._client.messages.stream(**kwargs) as stream:
+            async with self._client.messages.stream(
+                model=model,
+                messages=_to_anthropic_messages(messages),
+                max_tokens=max_tokens or 1024,
+                temperature=temperature if temperature is not None else omit,
+            ) as stream:
                 async for text in stream.text_stream:
                     yield StreamDelta(content=text)
                 final = await stream.get_final_message()

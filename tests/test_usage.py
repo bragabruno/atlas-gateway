@@ -18,13 +18,18 @@ from app.main import app
 
 def _make_row(app_name: str, model: str, inp: int, out: int, cost: str) -> MagicMock:
     row = MagicMock()
-    row.__getitem__ = lambda self, key: {
+    data: dict[str, object] = {
         "app": app_name,
         "model": model,
         "input_tokens": inp,
         "output_tokens": out,
         "total_cost_usd": Decimal(cost),
-    }[key]
+    }
+
+    def _getitem(_self: object, key: str) -> object:
+        return data[key]
+
+    row.__getitem__ = _getitem
     return row
 
 

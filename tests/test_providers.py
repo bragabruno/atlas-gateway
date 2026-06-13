@@ -6,12 +6,15 @@ SDK's real response shapes; the assertion is on the normalized ChatResult /
 EmbeddingResult that the provider returns.
 """
 
+# Tests replace each provider's protected `_client` with a mocked SDK client.
+# pyright: reportPrivateUsage=false
 from __future__ import annotations
 
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from anthropic.types import TextBlock
 
 from app.domain.messages import Message
 from app.providers.anthropic_provider import AnthropicProvider
@@ -25,6 +28,7 @@ _MESSAGES = [Message(role="user", content="hi")]
 # AnthropicProvider
 # ---------------------------------------------------------------------------
 
+
 class TestAnthropicProvider:
     def _provider(self) -> AnthropicProvider:
         return AnthropicProvider(api_key="test-key")
@@ -32,7 +36,10 @@ class TestAnthropicProvider:
     @pytest.mark.asyncio
     async def test_chat_returns_normalized_result(self) -> None:
         provider = self._provider()
-        mock_content = SimpleNamespace(text="hello")
+        # Use a real TextBlock: the provider narrows resp.content[0] with
+        # isinstance(TextBlock) before reading .text, so a duck-typed stub
+        # would (correctly) be treated as a non-text block and dropped.
+        mock_content = TextBlock(type="text", text="hello")
         mock_resp = SimpleNamespace(
             model="claude-3-5-sonnet-20241022",
             content=[mock_content],
@@ -63,6 +70,7 @@ class TestAnthropicProvider:
 # ---------------------------------------------------------------------------
 # OpenAIProvider
 # ---------------------------------------------------------------------------
+
 
 class TestOpenAIProvider:
     def _provider(self) -> OpenAIProvider:
@@ -134,6 +142,7 @@ class TestOpenAIProvider:
 # ProviderRegistry.from_settings
 # ---------------------------------------------------------------------------
 
+
 def test_registry_from_settings_no_keys_has_only_mock() -> None:
     settings = SimpleNamespace(anthropic_api_key=None, openai_api_key=None, google_api_key=None)
     registry = ProviderRegistry.from_settings(settings)
@@ -179,8 +188,9 @@ def test_registry_from_settings_wires_ollama_models() -> None:
     )
     registry = ProviderRegistry.from_settings(settings)
     # Each configured Ollama model id resolves to an OpenAI-protocol provider...
-    assert registry.resolve("gpt-oss:120b-cloud") is not None
-    assert registry.resolve("gpt-oss:120b-cloud").name == "openai"
+    gpt_oss = registry.resolve("gpt-oss:120b-cloud")
+    assert gpt_oss is not None
+    assert gpt_oss.name == "openai"
     assert registry.resolve("kimi-k2.5:cloud") is not None
     # ...and the mock fallback is still present.
     assert registry.resolve("mock") is not None

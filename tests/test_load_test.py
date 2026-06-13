@@ -1,5 +1,7 @@
 """POL-6 — Unit tests for the load-test report builder."""
 
+# Unit-tests the load-test module's private `_build_report` directly.
+# pyright: reportPrivateUsage=false
 from __future__ import annotations
 
 import sys
@@ -7,7 +9,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
 
-from load_test import RequestResult, _build_report  # type: ignore[import-untyped]
+from load_test import RequestResult, _build_report
 
 
 def _results(latencies: list[float], status: int = 200) -> list[RequestResult]:
@@ -45,7 +47,7 @@ def test_report_empty_results() -> None:
 
 
 def test_percentile_calculations() -> None:
-    latencies = list(range(1, 101))  # 1..100 ms
+    latencies = [float(x) for x in range(1, 101)]  # 1..100 ms
     results = _results(latencies)
     report = _build_report(results, target_rps=100, duration_s=1, p95_limit_ms=200.0)
     assert 49 <= report.p50_ms <= 51

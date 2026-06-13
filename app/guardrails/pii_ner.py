@@ -42,7 +42,7 @@ _NER_ENTITIES = [
     "PERSON",
     "LOCATION",
     "DATE_TIME",
-    "NRP",           # Nationalities, religious or political groups
+    "NRP",  # Nationalities, religious or political groups
     "ORGANIZATION",
 ]
 
@@ -50,16 +50,16 @@ _NER_ENTITIES = [
 _SPACY_MODEL = "en_core_web_lg"
 
 #: Thread pool for blocking spaCy inference — keeps the asyncio loop free.
-_EXECUTOR: concurrent.futures.ThreadPoolExecutor | None = None
+_executor: concurrent.futures.ThreadPoolExecutor | None = None
 
 
 def _get_executor() -> concurrent.futures.ThreadPoolExecutor:
-    global _EXECUTOR
-    if _EXECUTOR is None:
-        _EXECUTOR = concurrent.futures.ThreadPoolExecutor(
+    global _executor
+    if _executor is None:
+        _executor = concurrent.futures.ThreadPoolExecutor(
             max_workers=2, thread_name_prefix="pii-ner"
         )
-    return _EXECUTOR
+    return _executor
 
 
 def _load_analyzer() -> AnalyzerEngine:
@@ -67,10 +67,12 @@ def _load_analyzer() -> AnalyzerEngine:
     from presidio_analyzer import AnalyzerEngine
     from presidio_analyzer.nlp_engine import NlpEngineProvider
 
-    provider = NlpEngineProvider(nlp_configuration={
-        "nlp_engine_name": "spacy",
-        "models": [{"lang_code": "en", "model_name": _SPACY_MODEL}],
-    })
+    provider = NlpEngineProvider(
+        nlp_configuration={
+            "nlp_engine_name": "spacy",
+            "models": [{"lang_code": "en", "model_name": _SPACY_MODEL}],
+        }
+    )
     return AnalyzerEngine(nlp_engine=provider.create_engine(), supported_languages=["en"])
 
 
@@ -112,9 +114,7 @@ class PiiNerGuardrail:
         loop = asyncio.get_running_loop()
         executor = _get_executor()
         for msg in ctx.messages:
-            detected = await loop.run_in_executor(
-                executor, self._analyze_text, msg.content
-            )
+            detected = await loop.run_in_executor(executor, self._analyze_text, msg.content)
             if detected:
                 types = ", ".join(sorted(set(detected)))
                 raise GuardrailRejection(

@@ -113,9 +113,7 @@ async def test_unknown_model_prices_at_zero() -> None:
 async def test_record_publishes_event_when_publisher_wired() -> None:
     conn = _FakeConn()
     producer = _FakeProducer()
-    adapter = AccountingRecorder(
-        CallRecorder(conn), rates={}, publisher=EventPublisher(producer)
-    )
+    adapter = AccountingRecorder(CallRecorder(conn), rates={}, publisher=EventPublisher(producer))
 
     await adapter.record(_CALL)
 

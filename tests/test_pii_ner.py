@@ -5,6 +5,9 @@ install is required locally. The mock injects fake analysis results to exercise
 the guardrail logic. Skip the whole module if presidio is not installed.
 """
 
+# These tests inject a fake analyzer onto the guardrail's protected `_analyzer`
+# attribute — poking internals is the point of the unit test.
+# pyright: reportPrivateUsage=false
 from __future__ import annotations
 
 import importlib.util
@@ -78,7 +81,7 @@ async def test_pii_ner_checks_all_messages() -> None:
     guardrail = PiiNerGuardrail()
     call_count = 0
 
-    def analyze_side_effect(text: str, **_: object) -> list:
+    def analyze_side_effect(text: str, **_: object) -> list[object]:
         nonlocal call_count
         call_count += 1
         return [_fake_result("PERSON")] if "Jane" in text else []

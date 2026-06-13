@@ -83,7 +83,9 @@ async def _seed_aliases(conn: object, extra_models: list[str]) -> None:
         for r in ALIAS_SEED
     ]
     for model in ["mock", *extra_models]:
-        rows.append((model, model, model, provider_for_model(model).value, Decimal("0"), Decimal("0")))
+        rows.append(
+            (model, model, model, provider_for_model(model).value, Decimal("0"), Decimal("0"))
+        )
 
     for alias, primary, fallback, provider, in_rate, out_rate in rows:
         await conn.execute(  # type: ignore[attr-defined]
@@ -142,9 +144,7 @@ async def _seed_records(
         record = _synthetic_record(random.choice(api_keys), days=days)
         await recorder.record(record)
         # Spread created_at over the window (insert default is now()).
-        offset = timedelta(
-            days=random.uniform(0, days), seconds=random.uniform(0, 86400)
-        )
+        offset = timedelta(days=random.uniform(0, days), seconds=random.uniform(0, 86400))
         await conn.execute(  # type: ignore[attr-defined]
             "UPDATE call_records SET created_at = $1 WHERE id = $2",
             datetime.now(tz=UTC) - offset,

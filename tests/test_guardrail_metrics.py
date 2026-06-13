@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 from opentelemetry.sdk.metrics import MeterProvider
-from opentelemetry.sdk.metrics.export import InMemoryMetricReader
+from opentelemetry.sdk.metrics.export import InMemoryMetricReader, NumberDataPoint
 
 from app.domain.messages import Message
 from app.guardrails.chain import (
@@ -34,12 +34,24 @@ def _make_chain(*guardrails: object, reader: InMemoryMetricReader) -> GuardrailC
 def _data_points(reader: InMemoryMetricReader) -> dict[tuple[str, str], int]:
     """Return {(name, outcome): value} from recorded data points."""
     result: dict[tuple[str, str], int] = {}
-    for rm in reader.get_metrics_data().resource_metrics:
+    data = reader.get_metrics_data()
+    if data is None:
+        return result
+    for rm in data.resource_metrics:
         for sm in rm.scope_metrics:
             for metric in sm.metrics:
                 if metric.name == "atlas.guardrail.checks":
                     for dp in metric.data.data_points:
-                        key = (dp.attributes["guardrail.name"], dp.attributes["guardrail.outcome"])
+                        # Counter points are NumberDataPoints; narrow before
+                        # reading `.value`, and the attribute values are the
+                        # OTel AttributeValue union, so str() the key parts.
+                        if not isinstance(dp, NumberDataPoint):
+                            continue
+                        attrs = dp.attributes or {}
+                        key = (
+                            str(attrs.get("guardrail.name")),
+                            str(attrs.get("guardrail.outcome")),
+                        )
                         result[key] = int(dp.value)
     return result
 

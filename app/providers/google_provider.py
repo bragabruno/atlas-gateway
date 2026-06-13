@@ -11,8 +11,12 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 
-from google import genai
+# `google` is a PEP-420 namespace package with no top-level py.typed marker, so
+# pyright reports a missing stub for it even though `google.genai` itself ships
+# py.typed and is fully typed. Pin the one unavoidable namespace-level miss here.
+from google import genai  # pyright: ignore[reportMissingTypeStubs]
 from google.genai import errors as genai_errors
+from google.genai import types as genai_types
 
 from app.domain.messages import ChatResult, EmbeddingResult, Message, StreamDelta, Usage
 from app.resilience.retry import TransientProviderError
@@ -39,13 +43,24 @@ def _is_transient(exc: genai_errors.APIError) -> bool:
     return code in _TRANSIENT_STATUS_CODES
 
 
-def _messages_to_contents(messages: list[Message]) -> list[dict]:
-    """Convert domain Messages to the google-genai `contents` format."""
+def _messages_to_contents(messages: list[Message]) -> list[genai_types.Content]:
+    """Convert domain Messages to the google-genai typed `contents` list."""
     role_map = {"user": "user", "assistant": "model", "system": "user"}
     return [
-        {"role": role_map.get(m.role, "user"), "parts": [{"text": m.content}]}
+        genai_types.Content(
+            role=role_map.get(m.role, "user"),
+            parts=[genai_types.Part(text=m.content)],
+        )
         for m in messages
     ]
+
+
+def _config(max_tokens: int | None, temperature: float | None) -> genai_types.GenerateContentConfig:
+    """Build the typed generation config (both fields are Optional in the SDK)."""
+    return genai_types.GenerateContentConfig(
+        max_output_tokens=max_tokens,
+        temperature=temperature,
+    )
 
 
 class GoogleProvider:
@@ -64,16 +79,14 @@ class GoogleProvider:
         max_tokens: int | None = None,
         temperature: float | None = None,
     ) -> ChatResult:
-        config: dict = {}
-        if max_tokens is not None:
-            config["max_output_tokens"] = max_tokens
-        if temperature is not None:
-            config["temperature"] = temperature
         try:
-            resp = await self._client.aio.models.generate_content(
+            # The SDK types `contents` with PIL.Image (an optional image dep we
+            # don't install); pyright renders it Unknown → partially-unknown
+            # member. The return type stays fully known, so pin just this access.
+            resp = await self._client.aio.models.generate_content(  # pyright: ignore[reportUnknownMemberType]
                 model=model,
                 contents=_messages_to_contents(messages),
-                config=config or None,
+                config=_config(max_tokens, temperature),
             )
         except genai_errors.APIError as exc:
             if _is_transient(exc):
@@ -88,8 +101,8 @@ class GoogleProvider:
             content=text,
             finish_reason=finish,
             usage=Usage(
-                input_tokens=meta.prompt_token_count if meta else 0,
-                output_tokens=meta.candidates_token_count if meta else 0,
+                input_tokens=(meta.prompt_token_count or 0) if meta else 0,
+                output_tokens=(meta.candidates_token_count or 0) if meta else 0,
             ),
         )
 
@@ -118,17 +131,14 @@ class GoogleProvider:
         max_tokens: int | None = None,
         temperature: float | None = None,
     ) -> AsyncIterator[StreamDelta]:
-        config: dict = {}
-        if max_tokens is not None:
-            config["max_output_tokens"] = max_tokens
-        if temperature is not None:
-            config["temperature"] = temperature
         try:
-            async for chunk in await self._client.aio.models.generate_content_stream(
+            # See chat(): SDK's PIL-typed `contents` → ignore only this access.
+            stream = await self._client.aio.models.generate_content_stream(  # pyright: ignore[reportUnknownMemberType]
                 model=model,
                 contents=_messages_to_contents(messages),
-                config=config or None,
-            ):
+                config=_config(max_tokens, temperature),
+            )
+            async for chunk in stream:
                 if chunk.text:
                     yield StreamDelta(content=chunk.text)
                 meta = chunk.usage_metadata
@@ -149,7 +159,8 @@ class GoogleProvider:
 
     async def embed(self, *, model: str, inputs: list[str]) -> EmbeddingResult:
         try:
-            resp = await self._client.aio.models.embed_content(
+            # See chat(): SDK's PIL-typed `contents` → ignore only this access.
+            resp = await self._client.aio.models.embed_content(  # pyright: ignore[reportUnknownMemberType]
                 model=model,
                 contents=inputs,
             )
@@ -157,7 +168,7 @@ class GoogleProvider:
             if _is_transient(exc):
                 raise TransientProviderError(str(exc)) from exc
             raise
-        embeddings = [e.values for e in resp.embeddings]
+        embeddings = [e.values or [] for e in (resp.embeddings or [])]
         return EmbeddingResult(model=model, embeddings=embeddings, usage=Usage())
 
     async def models(self) -> list[str]:

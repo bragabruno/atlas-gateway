@@ -2,6 +2,18 @@
   "components": {
     "schemas": {
       "ChatCompletionRequest": {
+        "example": {
+          "max_tokens": 64,
+          "messages": [
+            {
+              "content": "Hello, Atlas.",
+              "role": "user"
+            }
+          ],
+          "model": "mock",
+          "stream": false,
+          "temperature": 0.2
+        },
         "properties": {
           "max_tokens": {
             "anyOf": [
@@ -12,9 +24,11 @@
                 "type": "null"
               }
             ],
+            "description": "Cap on generated tokens. `None` defers to the provider default.",
             "title": "Max Tokens"
           },
           "messages": {
+            "description": "Ordered conversation messages.",
             "items": {
               "$ref": "#/components/schemas/ChatMessage"
             },
@@ -22,6 +36,7 @@
             "type": "array"
           },
           "model": {
+            "description": "Provider model id or Atlas alias (resolved via `app.providers.registry`).",
             "title": "Model",
             "type": "string"
           },
@@ -34,6 +49,7 @@
                 "type": "null"
               }
             ],
+            "description": "Template params for `prompt_ref` rendering.",
             "title": "Prompt Params"
           },
           "prompt_ref": {
@@ -45,10 +61,12 @@
                 "type": "null"
               }
             ],
+            "description": "Optional prompt-registry reference `<name>@<semver|production>` (REG-4). Resolved + rendered server-side and prepended as a system message. `None` (default) leaves the request unchanged.",
             "title": "Prompt Ref"
           },
           "stream": {
             "default": false,
+            "description": "When `true`, response is `text/event-stream` carrying `chat.completion.chunk` deltas terminated by `data: [DONE]`.",
             "title": "Stream",
             "type": "boolean"
           },
@@ -61,6 +79,7 @@
                 "type": "null"
               }
             ],
+            "description": "Sampling temperature in `[0, 2]`. `None` defers to the provider default.",
             "title": "Temperature"
           }
         },
@@ -72,12 +91,18 @@
         "type": "object"
       },
       "ChatMessage": {
+        "example": {
+          "content": "Hello, Atlas.",
+          "role": "user"
+        },
         "properties": {
           "content": {
+            "description": "Message content (plain text).",
             "title": "Content",
             "type": "string"
           },
           "role": {
+            "description": "Conversation role. One of `system`, `user`, `assistant`, `tool`.",
             "title": "Role",
             "type": "string"
           }
@@ -92,6 +117,7 @@
       "EmbeddingData": {
         "properties": {
           "embedding": {
+            "description": "Dense vector for this input.",
             "items": {
               "type": "number"
             },
@@ -99,11 +125,13 @@
             "type": "array"
           },
           "index": {
+            "description": "Position in the input batch.",
             "title": "Index",
             "type": "integer"
           },
           "object": {
             "default": "embedding",
+            "description": "Always `embedding`.",
             "title": "Object",
             "type": "string"
           }
@@ -116,6 +144,10 @@
         "type": "object"
       },
       "EmbeddingRequest": {
+        "example": {
+          "input": "Hello, Atlas.",
+          "model": "mock"
+        },
         "properties": {
           "input": {
             "anyOf": [
@@ -129,9 +161,11 @@
                 "type": "array"
               }
             ],
+            "description": "One string or a batch of strings to embed.",
             "title": "Input"
           },
           "model": {
+            "description": "Provider model id or Atlas alias.",
             "title": "Model",
             "type": "string"
           }
@@ -144,8 +178,28 @@
         "type": "object"
       },
       "EmbeddingResponse": {
+        "example": {
+          "data": [
+            {
+              "embedding": [
+                0.01,
+                -0.02,
+                0.03
+              ],
+              "index": 0,
+              "object": "embedding"
+            }
+          ],
+          "model": "mock",
+          "object": "list",
+          "usage": {
+            "prompt_tokens": 6,
+            "total_tokens": 6
+          }
+        },
         "properties": {
           "data": {
+            "description": "One entry per input, in input order.",
             "items": {
               "$ref": "#/components/schemas/EmbeddingData"
             },
@@ -153,16 +207,19 @@
             "type": "array"
           },
           "model": {
+            "description": "The model that served the request.",
             "title": "Model",
             "type": "string"
           },
           "object": {
             "default": "list",
+            "description": "Always `list`.",
             "title": "Object",
             "type": "string"
           },
           "usage": {
-            "$ref": "#/components/schemas/EmbeddingUsage"
+            "$ref": "#/components/schemas/EmbeddingUsage",
+            "description": "Token usage for billing + accounting."
           }
         },
         "required": [
@@ -176,10 +233,12 @@
       "EmbeddingUsage": {
         "properties": {
           "prompt_tokens": {
+            "description": "Tokens consumed across the batch.",
             "title": "Prompt Tokens",
             "type": "integer"
           },
           "total_tokens": {
+            "description": "`prompt_tokens` (no generation for embeddings).",
             "title": "Total Tokens",
             "type": "integer"
           }
@@ -189,6 +248,44 @@
           "total_tokens"
         ],
         "title": "EmbeddingUsage",
+        "type": "object"
+      },
+      "ErrorEnvelope": {
+        "description": "Typed error body for non-2xx responses.\n\nFastAPI's default HTTPException emits `{\"detail\": ...}`. Some paths (rate\nlimit, budget) return a richer body — this envelope is the documented\nsuperset so codegen produces a single typed error model.",
+        "example": {
+          "code": "unauthorized",
+          "detail": "invalid api key"
+        },
+        "properties": {
+          "code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Optional machine-readable error code (provider/guardrail name).",
+            "title": "Code"
+          },
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "object"
+              }
+            ],
+            "description": "Human-readable error message, or a structured object for guardrail / rate-limit rejections (see per-endpoint response docs).",
+            "title": "Detail"
+          }
+        },
+        "required": [
+          "detail"
+        ],
+        "title": "ErrorEnvelope",
         "type": "object"
       },
       "HTTPValidationError": {
@@ -207,15 +304,18 @@
       "Model": {
         "properties": {
           "id": {
+            "description": "Model id or Atlas alias.",
             "title": "Id",
             "type": "string"
           },
           "object": {
             "default": "model",
+            "description": "Always `model`.",
             "title": "Object",
             "type": "string"
           },
           "owned_by": {
+            "description": "Provider — `openai`, `anthropic`, `google`, `atlas`.",
             "title": "Owned By",
             "type": "string"
           }
@@ -228,8 +328,24 @@
         "type": "object"
       },
       "ModelList": {
+        "example": {
+          "data": [
+            {
+              "id": "mock",
+              "object": "model",
+              "owned_by": "atlas"
+            },
+            {
+              "id": "gpt-4o-mini",
+              "object": "model",
+              "owned_by": "openai"
+            }
+          ],
+          "object": "list"
+        },
         "properties": {
           "data": {
+            "description": "All models advertised by the provider registry.",
             "items": {
               "$ref": "#/components/schemas/Model"
             },
@@ -238,6 +354,7 @@
           },
           "object": {
             "default": "list",
+            "description": "Always `list`.",
             "title": "Object",
             "type": "string"
           }
@@ -249,8 +366,21 @@
         "type": "object"
       },
       "UsageResponse": {
+        "example": {
+          "rows": [
+            {
+              "app": "regdoc-qa",
+              "input_tokens": 12345,
+              "model": "gpt-4o-mini",
+              "output_tokens": 4567,
+              "total_cost_usd": "1.2345"
+            }
+          ],
+          "since": "2026-06-01"
+        },
         "properties": {
           "rows": {
+            "description": "One row per (app, model). Sorted by cost desc.",
             "items": {
               "$ref": "#/components/schemas/UsageRow"
             },
@@ -258,6 +388,7 @@
             "type": "array"
           },
           "since": {
+            "description": "Inclusive start of the aggregation window (UTC date).",
             "format": "date",
             "title": "Since",
             "type": "string"
@@ -273,22 +404,27 @@
       "UsageRow": {
         "properties": {
           "app": {
+            "description": "Calling app id (per-API-key label).",
             "title": "App",
             "type": "string"
           },
           "input_tokens": {
+            "description": "Sum of prompt tokens over the window.",
             "title": "Input Tokens",
             "type": "integer"
           },
           "model": {
+            "description": "Provider model id or Atlas alias served.",
             "title": "Model",
             "type": "string"
           },
           "output_tokens": {
+            "description": "Sum of completion tokens over the window.",
             "title": "Output Tokens",
             "type": "integer"
           },
           "total_cost_usd": {
+            "description": "Sum of `computed_cost_usd` (USD).",
             "title": "Total Cost Usd",
             "type": "string"
           }
@@ -336,9 +472,25 @@
         "title": "ValidationError",
         "type": "object"
       }
+    },
+    "securitySchemes": {
+      "BearerAuth": {
+        "bearerFormat": "Atlas API key",
+        "description": "Atlas API key sent as `Authorization: Bearer <key>`. Local dev default is `dev-key`; real deployments source keys from Key Vault.",
+        "scheme": "bearer",
+        "type": "http"
+      }
     }
   },
   "info": {
+    "contact": {
+      "email": "contact@bragdev.com",
+      "name": "Bruno Braga"
+    },
+    "description": "The **Atlas Gateway** is the single OpenAI-compatible facade in front of\nOpenAI, Anthropic, and Google. Every LLM call from the frontend and the agent\nruntime flows through here so prompts are versionable, guardrails enforceable,\nand every call cost-traceable (ADR-014).\n\n### Authentication\nAll `/v1/*` endpoints require `Authorization: Bearer <key>`. Local dev keys\ncome from `ATLAS_API_KEYS` (default `[\"dev-key\"]`); real deployments source\nkeys from Key Vault.\n\n### Streaming\n`POST /v1/chat/completions` with `\"stream\": true` returns\n`text/event-stream` carrying OpenAI `chat.completion.chunk` deltas terminated\nby `data: [DONE]`.\n\n### Errors\n4xx/5xx responses use the `ErrorEnvelope` schema (`{detail, code?}`).\nPer-endpoint codes are documented under each operation's responses.\n",
+    "license": {
+      "name": "Internal — Atlas (Enhesa mirror)"
+    },
     "title": "Atlas Gateway",
     "version": "0.1.0"
   },
@@ -346,6 +498,7 @@
   "paths": {
     "/healthz": {
       "get": {
+        "description": "Returns `{\"status\": \"ok\"}`. No dependencies; safe to poll.",
         "operationId": "healthz_healthz_get",
         "responses": {
           "200": {
@@ -363,30 +516,16 @@
             "description": "Successful Response"
           }
         },
-        "summary": "Healthz"
+        "summary": "Liveness probe",
+        "tags": [
+          "health"
+        ]
       }
     },
     "/v1/chat/completions": {
       "post": {
+        "description": "OpenAI-compatible chat completion. Set `stream: true` to receive a `text/event-stream` of `chat.completion.chunk` deltas instead of a single JSON response. Honors guardrails (GRD-*), rate limits (GW-16), monthly budgets (GW-17), and the prompt registry (REG-4).",
         "operationId": "chat_completions_v1_chat_completions_post",
-        "parameters": [
-          {
-            "in": "header",
-            "name": "authorization",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -401,46 +540,76 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/ChatCompletionResponse"
+                }
+              },
+              "text/event-stream": {
+                "example": "data: {\"id\":\"chatcmpl-1\",\"object\":\"chat.completion.chunk\",\"created\":1735689600,\"model\":\"mock\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\"}}]}\n\ndata: {\"id\":\"chatcmpl-1\",\"object\":\"chat.completion.chunk\",\"created\":1735689600,\"model\":\"mock\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Hi\"}}]}\n\ndata: [DONE]\n\n",
+                "schema": {
+                  "description": "Server-Sent Events. Each line `data: {json}` carries a `ChatCompletionChunk`. Terminator: `data: [DONE]`.",
+                  "type": "string"
+                }
               }
             },
-            "description": "Successful Response"
+            "description": "Chat completion (JSON) or SSE stream of `chat.completion.chunk` deltas."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Missing or invalid Bearer key."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unknown model — no provider/alias matched."
           },
           "422": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/ErrorEnvelope"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Guardrail rejection. `detail` is `{guardrail, phase, reason}` naming the check and pipeline phase that rejected the request."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Rate limit or monthly budget exceeded. Response carries `Retry-After` (seconds). Body shape matches atlas-docs/03 §5.2."
           }
         },
-        "summary": "Chat Completions"
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "Create a chat completion",
+        "tags": [
+          "chat"
+        ]
       }
     },
     "/v1/embeddings": {
       "post": {
+        "description": "OpenAI-compatible embeddings. `input` may be a single string or a batch; the response preserves input order.",
         "operationId": "embeddings_v1_embeddings_post",
-        "parameters": [
-          {
-            "in": "header",
-            "name": "authorization",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -462,51 +631,25 @@
             },
             "description": "Successful Response"
           },
-          "422": {
+          "401": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/ErrorEnvelope"
                 }
               }
             },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Embeddings"
-      }
-    },
-    "/v1/models": {
-      "get": {
-        "operationId": "list_models_v1_models_get",
-        "parameters": [
-          {
-            "in": "header",
-            "name": "authorization",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
+            "description": "Missing or invalid Bearer key."
+          },
+          "404": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ModelList"
+                  "$ref": "#/components/schemas/ErrorEnvelope"
                 }
               }
             },
-            "description": "Successful Response"
+            "description": "Unknown model — no provider/alias matched."
           },
           "422": {
             "content": {
@@ -519,11 +662,57 @@
             "description": "Validation Error"
           }
         },
-        "summary": "List Models"
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "Create embeddings",
+        "tags": [
+          "embeddings"
+        ]
+      }
+    },
+    "/v1/models": {
+      "get": {
+        "description": "OpenAI-compatible model list. Aggregates every model id/alias advertised by the provider registry (OpenAI + Anthropic + Google + Atlas Mock).",
+        "operationId": "list_models_v1_models_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelList"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Missing or invalid Bearer key."
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "List available models",
+        "tags": [
+          "models"
+        ]
       }
     },
     "/v1/usage": {
       "get": {
+        "description": "Token + cost aggregates from `call_records`, grouped by (app, model) and sorted by total cost desc. Default window: current calendar month. Requires `ATLAS_DB_URL`; returns 503 when accounting DB is not configured.",
         "operationId": "get_usage_v1_usage_get",
         "parameters": [
           {
@@ -542,22 +731,6 @@
               ],
               "title": "Since"
             }
-          },
-          {
-            "in": "header",
-            "name": "authorization",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
           }
         ],
         "responses": {
@@ -571,6 +744,16 @@
             },
             "description": "Successful Response"
           },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Missing or invalid Bearer key."
+          },
           "422": {
             "content": {
               "application/json": {
@@ -580,10 +763,60 @@
               }
             },
             "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Accounting DB not configured (`ATLAS_DB_URL` unset)."
           }
         },
-        "summary": "Get Usage"
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "Per-(app, model) usage aggregates",
+        "tags": [
+          "usage"
+        ]
       }
     }
-  }
+  },
+  "servers": [
+    {
+      "description": "Local debug (VS Code launcher)",
+      "url": "http://localhost:8090"
+    },
+    {
+      "description": "In-cluster (AKS)",
+      "url": "http://atlas-gateway.atlas-platform.svc:8000"
+    }
+  ],
+  "tags": [
+    {
+      "description": "OpenAI-compatible chat completions (non-streaming JSON + SSE stream). Honors guardrails, rate limits, and budget; emits cost events to Kafka via the accounting recorder.",
+      "name": "chat"
+    },
+    {
+      "description": "OpenAI-compatible embeddings. Returns a list of 1+ embedding vectors matching the order of the input.",
+      "name": "embeddings"
+    },
+    {
+      "description": "OpenAI-compatible model list. Aggregated from the provider registry.",
+      "name": "models"
+    },
+    {
+      "description": "Per-(app, model) token + cost aggregates over a date window. Requires `ATLAS_DB_URL`; returns 503 when the accounting DB is not configured.",
+      "name": "usage"
+    },
+    {
+      "description": "Liveness probe. Used by Kubernetes and the local-compose stack.",
+      "name": "health"
+    }
+  ]
 }

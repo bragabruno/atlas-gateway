@@ -17,10 +17,11 @@ from decimal import Decimal
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.api.deps import get_db_pool, require_api_key
 from app.config import Settings, get_settings
+from app.domain.openai import ErrorEnvelope
 
 router = APIRouter()
 
@@ -31,16 +32,33 @@ router = APIRouter()
 
 
 class UsageRow(BaseModel):
-    app: str
-    model: str
-    input_tokens: int
-    output_tokens: int
-    total_cost_usd: Decimal
+    app: str = Field(description="Calling app id (per-API-key label).")
+    model: str = Field(description="Provider model id or Atlas alias served.")
+    input_tokens: int = Field(description="Sum of prompt tokens over the window.")
+    output_tokens: int = Field(description="Sum of completion tokens over the window.")
+    total_cost_usd: Decimal = Field(description="Sum of `computed_cost_usd` (USD).")
 
 
 class UsageResponse(BaseModel):
-    since: date
-    rows: list[UsageRow]
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "since": "2026-06-01",
+                "rows": [
+                    {
+                        "app": "regdoc-qa",
+                        "model": "gpt-4o-mini",
+                        "input_tokens": 12_345,
+                        "output_tokens": 4_567,
+                        "total_cost_usd": "1.2345",
+                    }
+                ],
+            }
+        }
+    )
+
+    since: date = Field(description="Inclusive start of the aggregation window (UTC date).")
+    rows: list[UsageRow] = Field(description="One row per (app, model). Sorted by cost desc.")
 
 
 # ---------------------------------------------------------------------------
@@ -66,7 +84,24 @@ ORDER BY total_cost_usd DESC
 # ---------------------------------------------------------------------------
 
 
-@router.get("/v1/usage", response_model=UsageResponse)
+@router.get(
+    "/v1/usage",
+    response_model=UsageResponse,
+    tags=["usage"],
+    summary="Per-(app, model) usage aggregates",
+    description=(
+        "Token + cost aggregates from `call_records`, grouped by (app, model) "
+        "and sorted by total cost desc. Default window: current calendar month. "
+        "Requires `ATLAS_DB_URL`; returns 503 when accounting DB is not configured."
+    ),
+    responses={
+        401: {"model": ErrorEnvelope, "description": "Missing or invalid Bearer key."},
+        503: {
+            "model": ErrorEnvelope,
+            "description": "Accounting DB not configured (`ATLAS_DB_URL` unset).",
+        },
+    },
+)
 async def get_usage(
     _key: Annotated[str, Depends(require_api_key)],
     settings: Annotated[Settings, Depends(get_settings)],

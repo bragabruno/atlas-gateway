@@ -14,13 +14,28 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from app.api.deps import get_embeddings_service, require_api_key
 from app.domain.errors import UnknownModelError
-from app.domain.openai import EmbeddingRequest, EmbeddingResponse
+from app.domain.openai import EmbeddingRequest, EmbeddingResponse, ErrorEnvelope
 from app.services.embeddings_service import EmbeddingsService
 
 router = APIRouter()
 
 
-@router.post("/v1/embeddings")
+@router.post(
+    "/v1/embeddings",
+    tags=["embeddings"],
+    summary="Create embeddings",
+    description=(
+        "OpenAI-compatible embeddings. `input` may be a single string or a batch; "
+        "the response preserves input order."
+    ),
+    responses={
+        401: {"model": ErrorEnvelope, "description": "Missing or invalid Bearer key."},
+        404: {
+            "model": ErrorEnvelope,
+            "description": "Unknown model — no provider/alias matched.",
+        },
+    },
+)
 async def embeddings(
     req: EmbeddingRequest,
     service: Annotated[EmbeddingsService, Depends(get_embeddings_service)],

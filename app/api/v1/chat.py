@@ -31,7 +31,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 from app.api.deps import get_chat_service, require_api_key
 from app.domain.errors import UnknownModelError
-from app.domain.openai import ChatCompletionRequest, ChatCompletionResponse
+from app.domain.openai import ChatCompletionRequest, ChatCompletionResponse, ErrorEnvelope
 from app.guardrails.chain import GuardrailRejection
 from app.limits.budget import BudgetExceeded
 from app.limits.ratelimit import RateLimitExceeded
@@ -43,8 +43,69 @@ router = APIRouter()
 #: date, not an instant); a same-day reset still yields a positive header.
 _SECONDS_PER_DAY = 24 * 60 * 60
 
+#: Documents the dual content type on `POST /v1/chat/completions`: non-streaming
+#: requests get `application/json` (ChatCompletionResponse), streaming requests
+#: get `text/event-stream` (SSE-framed `chat.completion.chunk` deltas). FastAPI
+#: doesn't infer SSE bodies from the return type, so we declare it explicitly.
+_CHAT_RESPONSES: dict[int | str, dict[str, object]] = {
+    200: {
+        "description": "Chat completion (JSON) or SSE stream of `chat.completion.chunk` deltas.",
+        "content": {
+            "application/json": {
+                "schema": {"$ref": "#/components/schemas/ChatCompletionResponse"},
+            },
+            "text/event-stream": {
+                "schema": {
+                    "type": "string",
+                    "description": (
+                        "Server-Sent Events. Each line `data: {json}` carries a "
+                        "`ChatCompletionChunk`. Terminator: `data: [DONE]`."
+                    ),
+                },
+                "example": (
+                    'data: {"id":"chatcmpl-1","object":"chat.completion.chunk",'
+                    '"created":1735689600,"model":"mock",'
+                    '"choices":[{"index":0,"delta":{"role":"assistant"}}]}\n\n'
+                    'data: {"id":"chatcmpl-1","object":"chat.completion.chunk",'
+                    '"created":1735689600,"model":"mock",'
+                    '"choices":[{"index":0,"delta":{"content":"Hi"}}]}\n\n'
+                    "data: [DONE]\n\n"
+                ),
+            },
+        },
+    },
+    401: {"model": ErrorEnvelope, "description": "Missing or invalid Bearer key."},
+    404: {"model": ErrorEnvelope, "description": "Unknown model — no provider/alias matched."},
+    422: {
+        "model": ErrorEnvelope,
+        "description": (
+            "Guardrail rejection. `detail` is `{guardrail, phase, reason}` "
+            "naming the check and pipeline phase that rejected the request."
+        ),
+    },
+    429: {
+        "model": ErrorEnvelope,
+        "description": (
+            "Rate limit or monthly budget exceeded. Response carries `Retry-After` "
+            "(seconds). Body shape matches atlas-docs/03 §5.2."
+        ),
+    },
+}
 
-@router.post("/v1/chat/completions", response_model=None)
+
+@router.post(
+    "/v1/chat/completions",
+    response_model=None,
+    tags=["chat"],
+    summary="Create a chat completion",
+    description=(
+        "OpenAI-compatible chat completion. Set `stream: true` to receive a "
+        "`text/event-stream` of `chat.completion.chunk` deltas instead of a "
+        "single JSON response. Honors guardrails (GRD-*), rate limits (GW-16), "
+        "monthly budgets (GW-17), and the prompt registry (REG-4)."
+    ),
+    responses=_CHAT_RESPONSES,
+)
 async def chat_completions(
     req: ChatCompletionRequest,
     service: Annotated[ChatService, Depends(get_chat_service)],

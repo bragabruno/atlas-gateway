@@ -21,7 +21,8 @@ from functools import lru_cache
 from typing import TYPE_CHECKING, Annotated
 
 import redis.asyncio as redis_async
-from fastapi import Depends, Header, HTTPException
+from fastapi import Depends, HTTPException
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 if TYPE_CHECKING:
     import asyncio
@@ -256,13 +257,31 @@ async def get_db_pool(
         return cached
 
 
+# Declared once so FastAPI emits a single `BearerAuth` entry under
+# `components.securitySchemes` in the OpenAPI spec; every route that depends on
+# `require_api_key` then advertises `security: [{ BearerAuth: [] }]` and Swagger
+# UI renders the Authorize button. `auto_error=False` keeps the existing 401
+# semantics owned by `require_api_key` (its detail strings are part of the
+# external contract — tests assert the status, ADR-016 leaves the body shape to
+# the controller).
+bearer_scheme = HTTPBearer(
+    scheme_name="BearerAuth",
+    bearerFormat="Atlas API key",
+    description=(
+        "Atlas API key sent as `Authorization: Bearer <key>`. Local dev "
+        "default is `dev-key`; real deployments source keys from Key Vault."
+    ),
+    auto_error=False,
+)
+
+
 def require_api_key(
     settings: Annotated[Settings, Depends(get_settings)],
-    authorization: Annotated[str | None, Header()] = None,
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_scheme)] = None,
 ) -> str:
-    if authorization is None or not authorization.startswith("Bearer "):
+    if credentials is None or credentials.scheme.lower() != "bearer":
         raise HTTPException(status_code=401, detail="missing bearer token")
-    key = authorization.removeprefix("Bearer ").strip()
+    key = credentials.credentials.strip()
     if key not in settings.api_keys:
         raise HTTPException(status_code=401, detail="invalid api key")
     return key

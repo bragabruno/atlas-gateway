@@ -18,10 +18,15 @@ from __future__ import annotations
 from datetime import date
 from decimal import Decimal
 from functools import lru_cache
-from typing import Annotated
+from typing import TYPE_CHECKING, Annotated
 
 import redis.asyncio as redis_async
 from fastapi import Depends, Header, HTTPException
+
+if TYPE_CHECKING:
+    import asyncio
+
+    from app.accounting.adapter import AccountingRecorder
 
 from app.cache.exact import ExactCache
 from app.config import Settings, get_settings
@@ -125,7 +130,67 @@ def _build_guardrails(settings: Settings) -> GuardrailRunner | None:
     )
 
 
-def get_chat_service(
+#: Process-wide accounting singletons (pool-backed recorder + optional Kafka
+#: publisher). Built lazily on the first request that needs them — asyncpg pool
+#: creation and producer start are async, so the `lru_cache` idiom used for
+#: Redis doesn't fit; a module-level cache with an asyncio lock does.
+_accounting: dict[str, object] = {}
+_accounting_lock: asyncio.Lock | None = None
+
+
+async def _build_recorder(settings: Settings) -> AccountingRecorder | None:
+    """Construct (once) the accounting recorder, or `None` when not configured.
+
+    Gates on `accounting_enabled` AND `db_url` (the durable record is Postgres;
+    Kafka is additive). The publisher is wired only when
+    `kafka_bootstrap_servers` is also set, and its producer is started here —
+    failures fall back to DB-only recording rather than disabling accounting.
+    """
+    global _accounting_lock
+    if not settings.accounting_enabled or settings.db_url is None:
+        return None
+
+    import asyncio
+
+    from app.accounting.adapter import AccountingRecorder, rates_from_seed
+    from app.accounting.events import AIOKafkaProducerAdapter, EventPublisher
+    from app.accounting.recorder import CallRecorder
+
+    if _accounting_lock is None:
+        _accounting_lock = asyncio.Lock()
+    async with _accounting_lock:
+        cached = _accounting.get("recorder")
+        if cached is not None:
+            return cached  # type: ignore[return-value]
+
+        import asyncpg  # type: ignore[import-untyped]
+
+        pool = await asyncpg.create_pool(  # pyright: ignore[reportUnknownMemberType]
+            settings.db_url
+        )
+        _accounting["pool"] = pool
+
+        publisher: EventPublisher | None = None
+        if settings.kafka_bootstrap_servers:
+            try:
+                producer = AIOKafkaProducerAdapter(
+                    bootstrap_servers=settings.kafka_bootstrap_servers
+                )
+                await producer.start()
+                publisher = EventPublisher(producer)
+            except Exception:
+                # Kafka being down must not disable accounting — record to
+                # Postgres only (GW-15: events are additive, DB is durable).
+                publisher = None
+
+        recorder = AccountingRecorder(
+            CallRecorder(pool), rates=rates_from_seed(), publisher=publisher
+        )
+        _accounting["recorder"] = recorder
+        return recorder
+
+
+async def get_chat_service(
     registry: Annotated[ProviderRegistry, Depends(get_provider_registry)],
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> ChatService:
@@ -141,6 +206,7 @@ def get_chat_service(
         rate_limiter=_build_rate_limiter(settings),
         budget=_build_budget(settings),
         guardrails=_build_guardrails(settings),
+        recorder=await _build_recorder(settings),
     )
 
 
@@ -159,16 +225,35 @@ def get_embeddings_service(
 async def get_db_pool(
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> object | None:
-    """Return an asyncpg Pool when ATLAS_DB_URL is configured, else None.
+    """Return the process-wide asyncpg Pool when ATLAS_DB_URL is set, else None.
 
-    Imports asyncpg lazily so it is only required when a real DB is wired; tests
-    and the default env (no DB_URL) never touch asyncpg.
+    The pool is created once and cached in the module-level `_accounting` map
+    (shared with the recorder wiring) — previously this created a NEW pool per
+    request, leaking connections under load. Imports asyncpg lazily so tests
+    and the default env (no DB_URL) never touch it.
     """
     if settings.db_url is None:
         return None
+
+    cached = _accounting.get("pool")
+    if cached is not None:
+        return cached
+
+    import asyncio
+
     import asyncpg  # type: ignore[import-untyped]
 
-    return await asyncpg.create_pool(settings.db_url)
+    global _accounting_lock
+    if _accounting_lock is None:
+        _accounting_lock = asyncio.Lock()
+    async with _accounting_lock:
+        cached = _accounting.get("pool")
+        if cached is None:
+            cached = await asyncpg.create_pool(  # pyright: ignore[reportUnknownMemberType]
+                settings.db_url
+            )
+            _accounting["pool"] = cached
+        return cached
 
 
 def require_api_key(

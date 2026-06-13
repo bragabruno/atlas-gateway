@@ -11,7 +11,7 @@ from load_test import RequestResult, _build_report  # type: ignore[import-untype
 
 
 def _results(latencies: list[float], status: int = 200) -> list[RequestResult]:
-    return [RequestResult(latency_ms=l, status=status) for l in latencies]
+    return [RequestResult(latency_ms=ms, status=status) for ms in latencies]
 
 
 def test_report_passes_when_p95_under_limit() -> None:

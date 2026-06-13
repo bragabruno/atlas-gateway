@@ -9,7 +9,7 @@ EmbeddingResult that the provider returns.
 from __future__ import annotations
 
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -92,7 +92,9 @@ class TestOpenAIProvider:
         vec = [0.1, 0.2, 0.3]
         mock_item = SimpleNamespace(embedding=vec, index=0)
         mock_usage = SimpleNamespace(prompt_tokens=4, total_tokens=4)
-        mock_resp = SimpleNamespace(model="text-embedding-3-small", data=[mock_item], usage=mock_usage)
+        mock_resp = SimpleNamespace(
+            model="text-embedding-3-small", data=[mock_item], usage=mock_usage
+        )
         provider._client.embeddings.create = AsyncMock(return_value=mock_resp)
         result = await provider.embed(model="text-embedding-3-small", inputs=["hello"])
         assert result.embeddings == [vec]
@@ -101,6 +103,7 @@ class TestOpenAIProvider:
     @pytest.mark.asyncio
     async def test_transient_error_raises_transient_provider_error(self) -> None:
         import openai
+
         from app.resilience.retry import TransientProviderError
 
         provider = self._provider()

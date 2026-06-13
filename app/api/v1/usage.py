@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from datetime import date
 from decimal import Decimal
-from typing import Annotated, Any, Protocol
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel

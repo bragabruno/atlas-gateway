@@ -37,6 +37,16 @@ class Settings(BaseSettings):
     budget_enabled: bool = False
     guardrails_enabled: bool = False
 
+    #: Accounting (GW-14/15): when on AND db_url is set, every non-streaming
+    #: completion writes a priced `call_records` row; with Kafka also configured
+    #: each row fans out as an `atlas.calls.v1` event. Default OFF.
+    accounting_enabled: bool = False
+
+    #: Kafka bootstrap for the accounting event stream (e.g.
+    #: ``redpanda:9092`` in the local compose loop). ``None`` (default) means
+    #: records persist to Postgres only — no producer is ever constructed.
+    kafka_bootstrap_servers: str | None = None
+
     #: PostgreSQL DSN for the gateway DB (call_records etc.).  ``None`` disables
     #: the DB-backed usage endpoint; a real deployment sets ATLAS_DB_URL from
     #: Key Vault.

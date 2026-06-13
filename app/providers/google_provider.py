@@ -42,7 +42,10 @@ def _is_transient(exc: genai_errors.APIError) -> bool:
 def _messages_to_contents(messages: list[Message]) -> list[dict]:
     """Convert domain Messages to the google-genai `contents` format."""
     role_map = {"user": "user", "assistant": "model", "system": "user"}
-    return [{"role": role_map.get(m.role, "user"), "parts": [{"text": m.content}]} for m in messages]
+    return [
+        {"role": role_map.get(m.role, "user"), "parts": [{"text": m.content}]}
+        for m in messages
+    ]
 
 
 class GoogleProvider:
@@ -78,10 +81,12 @@ class GoogleProvider:
             raise
         text = resp.text or ""
         meta = resp.usage_metadata
+        candidates = resp.candidates
+        finish = str(candidates[0].finish_reason).lower() if candidates else "stop"
         return ChatResult(
             model=model,
             content=text,
-            finish_reason=str(resp.candidates[0].finish_reason).lower() if resp.candidates else "stop",
+            finish_reason=finish,
             usage=Usage(
                 input_tokens=meta.prompt_token_count if meta else 0,
                 output_tokens=meta.candidates_token_count if meta else 0,

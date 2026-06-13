@@ -39,6 +39,10 @@ dev = [
     "pyright==1.1.394",
     "fakeredis==2.35.1",
 ]
+loadtest = [
+    "locust==2.44.0",       # loadtest/locustfile.py;        released 2026-05-11 (>14d)
+    "schemathesis==4.20.3", # contract fuzzing vs openapi.json; released 2026-05-29 (>14d)
+]
 
 [tool.ruff]
 line-length = 100

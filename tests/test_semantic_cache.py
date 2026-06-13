@@ -8,11 +8,11 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from opentelemetry.sdk.metrics import MeterProvider
+from opentelemetry.sdk.metrics.export import InMemoryMetricReader
 
 from app.cache.semantic import SemanticCache, _collection, _normalize, _point_id
 from app.domain.messages import Message
-from opentelemetry.sdk.metrics import MeterProvider
-from opentelemetry.sdk.metrics.export import InMemoryMetricReader
 
 _MESSAGES = [Message(role="user", content="What does Article 6 require?")]
 _TENANT = "tenant-abc"

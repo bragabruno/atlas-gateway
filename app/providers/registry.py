@@ -25,7 +25,7 @@ class ProviderRegistry:
         )
 
     @classmethod
-    def from_settings(cls, settings: object) -> "ProviderRegistry":
+    def from_settings(cls, settings: object) -> ProviderRegistry:
         """Build a registry from runtime `Settings` — wire only present providers."""
         from app.providers.anthropic_provider import AnthropicProvider
         from app.providers.openai_provider import OpenAIProvider

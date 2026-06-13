@@ -30,7 +30,6 @@ import logging
 from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
-from app.domain.messages import Message
 from app.guardrails.chain import GuardrailContext, GuardrailPhase, GuardrailRejection
 
 if TYPE_CHECKING:
@@ -63,7 +62,7 @@ def _get_executor() -> concurrent.futures.ThreadPoolExecutor:
     return _EXECUTOR
 
 
-def _load_analyzer() -> "AnalyzerEngine":
+def _load_analyzer() -> AnalyzerEngine:
     """Lazy-load the Presidio AnalyzerEngine with the spaCy NLP backend."""
     from presidio_analyzer import AnalyzerEngine
     from presidio_analyzer.nlp_engine import NlpEngineProvider
@@ -93,7 +92,7 @@ class PiiNerGuardrail:
         self._entities = list(entities)
         self._analyzer: AnalyzerEngine | None = None
 
-    def _get_analyzer(self) -> "AnalyzerEngine":
+    def _get_analyzer(self) -> AnalyzerEngine:
         if self._analyzer is None:
             self._analyzer = _load_analyzer()
         return self._analyzer

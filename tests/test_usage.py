@@ -9,7 +9,6 @@ from datetime import date
 from decimal import Decimal
 from unittest.mock import AsyncMock, MagicMock
 
-import pytest
 from fastapi.testclient import TestClient
 
 from app.api.deps import get_db_pool, get_settings

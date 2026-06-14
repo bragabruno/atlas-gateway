@@ -19,6 +19,7 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.accounting.adapter import api_key_uuid
 from app.api.deps import get_db_pool, require_api_key
 from app.config import Settings, get_settings
 from app.domain.openai import ErrorEnvelope
@@ -65,6 +66,9 @@ class UsageResponse(BaseModel):
 # Query
 # ---------------------------------------------------------------------------
 
+#: Tenant-scoped aggregate: only rows for the authenticated key's deterministic
+#: UUID (api_key_uuid(bearer)) are returned. Uses the composite index
+#: ``idx_call_records_api_key_id (api_key_id, created_at DESC)``.
 _USAGE_SQL = """
 SELECT
     app,
@@ -73,7 +77,8 @@ SELECT
     SUM(output_tokens) AS output_tokens,
     SUM(computed_cost_usd) AS total_cost_usd
 FROM call_records
-WHERE created_at >= $1::timestamptz
+WHERE api_key_id = $1
+  AND created_at >= $2::timestamptz
 GROUP BY app, model
 ORDER BY total_cost_usd DESC
 """
@@ -103,7 +108,7 @@ ORDER BY total_cost_usd DESC
     },
 )
 async def get_usage(
-    _key: Annotated[str, Depends(require_api_key)],
+    key: Annotated[str, Depends(require_api_key)],
     settings: Annotated[Settings, Depends(get_settings)],
     since: date | None = None,
     pool: Any = Depends(get_db_pool),
@@ -112,7 +117,11 @@ async def get_usage(
         raise HTTPException(status_code=503, detail="usage data unavailable: DB not configured")
 
     window_start = since or date.today().replace(day=1)
-    rows = await pool.fetch(_USAGE_SQL, window_start)
+    # api_key_uuid is the same deterministic UUIDv5 the accounting recorder
+    # writes into call_records.api_key_id, so this lookup matches what was
+    # written without a separate api_keys table join.
+    api_key_id = api_key_uuid(key)
+    rows = await pool.fetch(_USAGE_SQL, api_key_id, window_start)
 
     return UsageResponse(
         since=window_start,

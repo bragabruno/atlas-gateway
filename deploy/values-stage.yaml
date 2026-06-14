@@ -2,6 +2,9 @@
 # Pre-prod: prod-like topology (canary, HPA, PDB) at reduced scale, for
 # validation before prod. Sits between values-dev.yaml and values-prod.yaml.
 
+# Stage keeps /docs reachable for QA; only prod gates them off.
+atlasEnvironment: "stage"
+
 replicaCount: 2
 
 image:

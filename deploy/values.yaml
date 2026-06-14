@@ -4,6 +4,12 @@
 # Azure Key Vault via the Secrets Store CSI driver — never baked into the image
 # or a plain Kubernetes Secret (atlas-docs/04 §3).
 
+# Deployment environment ("dev" / "stage" / "prod"). Surfaces as ATLAS_ENVIRONMENT
+# inside the pod and is read by app.config.Settings; the FastAPI app gates /docs,
+# /redoc, /openapi.json off when this resolves to "prod". Per-env values files
+# (values-stage.yaml, values-prod.yaml) override this.
+atlasEnvironment: "dev"
+
 replicaCount: 2
 
 image:

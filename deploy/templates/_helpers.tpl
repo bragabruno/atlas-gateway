@@ -89,6 +89,8 @@ spec:
           containerPort: {{ .Values.containerPort }}
           protocol: TCP
       env:
+        - name: ATLAS_ENVIRONMENT
+          value: {{ .Values.atlasEnvironment | quote }}
         - name: ATLAS_KAFKA_BOOTSTRAP_SERVERS
           value: {{ .Values.kafka.bootstrapServers | quote }}
         {{- with .Values.env }}

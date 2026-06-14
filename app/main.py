@@ -11,7 +11,7 @@ from app.api.v1.chat import router as chat_router
 from app.api.v1.embeddings import router as embeddings_router
 from app.api.v1.models import router as models_router
 from app.api.v1.usage import router as usage_router
-from app.config import get_settings
+from app.config import Settings, get_settings
 
 
 def _resolve_app_version() -> str:
@@ -79,51 +79,83 @@ _OPENAPI_TAGS = [
     },
 ]
 
-app = FastAPI(
-    title="Atlas Gateway",
-    version=_APP_VERSION,
-    description=_API_DESCRIPTION,
-    contact={"name": "Bruno Braga", "email": "contact@bragdev.com"},
-    license_info={"name": "Internal — Atlas (Enhesa mirror)"},
-    servers=[
-        {"url": "http://localhost:8090", "description": "Local debug (VS Code launcher)"},
-        {"url": "http://atlas-gateway.atlas-platform.svc:8000", "description": "In-cluster (AKS)"},
-    ],
-    openapi_tags=_OPENAPI_TAGS,
-    swagger_ui_parameters={
-        "persistAuthorization": True,
-        "displayRequestDuration": True,
-        "tryItOutEnabled": True,
-        "docExpansion": "list",
-    },
-)
 
-# CORS is config-gated and default OFF: with no ATLAS_CORS_ALLOW_ORIGINS set the
-# middleware is not added, so behaviour is identical to the pre-CORS gateway.
-# Browser SPAs (e.g. the local-compose frontend on http://localhost:8080) call
-# the gateway cross-origin and need their origin allowlisted here.
-_cors_origins = get_settings().cors_allow_origins
-if _cors_origins:
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=list(_cors_origins),
-        allow_credentials=False,  # auth is via the Authorization header, not cookies
-        allow_methods=["*"],
-        allow_headers=["*"],
+async def healthz() -> dict[str, str]:
+    """Liveness probe — `{"status": "ok"}`. No dependencies; safe to poll."""
+    return {"status": "ok"}
+
+
+def create_app(settings: Settings) -> FastAPI:
+    """Construct the FastAPI app for ``settings``.
+
+    Extracted from module scope so the docs gate (``environment != "prod"``)
+    and the CORS allowlist are unit-testable without monkey-patching. The
+    module-level ``app = create_app(get_settings())`` below preserves the
+    runtime wiring unchanged.
+
+    persistAuthorization is hard-False (was True): the Swagger UI no longer
+    persists bearer tokens to browser localStorage, shrinking the token-theft
+    surface via XSS or compromised browser extensions in environments where
+    docs remain reachable.
+    """
+    docs_enabled = settings.environment != "prod"
+    application = FastAPI(
+        title="Atlas Gateway",
+        version=_APP_VERSION,
+        description=_API_DESCRIPTION,
+        contact={"name": "Bruno Braga", "email": "contact@bragdev.com"},
+        license_info={"name": "Internal — Atlas (Enhesa mirror)"},
+        servers=[
+            {"url": "http://localhost:8090", "description": "Local debug (VS Code launcher)"},
+            {
+                "url": "http://atlas-gateway.atlas-platform.svc:8000",
+                "description": "In-cluster (AKS)",
+            },
+        ],
+        openapi_tags=_OPENAPI_TAGS,
+        docs_url="/docs" if docs_enabled else None,
+        redoc_url="/redoc" if docs_enabled else None,
+        openapi_url="/openapi.json" if docs_enabled else None,
+        swagger_ui_parameters=(
+            {
+                "persistAuthorization": False,
+                "displayRequestDuration": True,
+                "tryItOutEnabled": True,
+                "docExpansion": "list",
+            }
+            if docs_enabled
+            else None
+        ),
     )
 
-app.include_router(chat_router)
-app.include_router(models_router)
-app.include_router(embeddings_router)
-app.include_router(usage_router)
+    # CORS is config-gated and default OFF: with no ATLAS_CORS_ALLOW_ORIGINS set
+    # the middleware is not added, so behaviour is identical to the pre-CORS
+    # gateway. Browser SPAs (e.g. the local-compose frontend on
+    # http://localhost:8080) call the gateway cross-origin and need their origin
+    # allowlisted here.
+    if settings.cors_allow_origins:
+        application.add_middleware(
+            CORSMiddleware,
+            allow_origins=list(settings.cors_allow_origins),
+            allow_credentials=False,  # auth is via the Authorization header, not cookies
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
+
+    application.include_router(chat_router)
+    application.include_router(models_router)
+    application.include_router(embeddings_router)
+    application.include_router(usage_router)
+
+    application.get(
+        "/healthz",
+        tags=["health"],
+        summary="Liveness probe",
+        description='Returns `{"status": "ok"}`. No dependencies; safe to poll.',
+        response_model=dict[str, str],
+    )(healthz)
+
+    return application
 
 
-@app.get(
-    "/healthz",
-    tags=["health"],
-    summary="Liveness probe",
-    description='Returns `{"status": "ok"}`. No dependencies; safe to poll.',
-    response_model=dict[str, str],
-)
-async def healthz() -> dict[str, str]:
-    return {"status": "ok"}
+app = create_app(get_settings())

@@ -1,6 +1,9 @@
 # atlas-gateway/deploy/values-prod.yaml — prod overrides (atlas-docs/04 §4.2, §5.4).
 # Argo Rollouts canary replaces the Deployment; HPA + PDB on; larger SKUs.
 
+# Gates /docs, /redoc, /openapi.json off in production (app.config.Settings).
+atlasEnvironment: "prod"
+
 replicaCount: 3
 
 image:

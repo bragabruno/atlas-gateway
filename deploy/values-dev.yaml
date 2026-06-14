@@ -2,6 +2,9 @@
 # One replica, small SKUs, plain Deployment (no canary/HPA/PDB) — the AKS dev
 # namespace loop (`make cloud-up ENV=dev` in atlas-infra).
 
+# Set explicitly (matches the chart default) so deploy logs are unambiguous.
+atlasEnvironment: "dev"
+
 replicaCount: 1
 
 image:

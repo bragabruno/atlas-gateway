@@ -145,15 +145,24 @@ def test_migration_chain_has_single_head_revising_gw9() -> None:
     """
     script = _script_directory()
     revisions = list(script.walk_revisions())
-    assert len(revisions) == 3
-    assert set(script.get_heads()) == {"d2f1a7c9e3b4"}  # single linear head
+    assert len(revisions) == 4
+    assert set(script.get_heads()) == {"e4b8c2d6f1a9"}  # single linear head
 
     by_id = {rev.revision: rev for rev in revisions}
-    assert set(by_id) == {"b113ca4237b0", "cb474b300c35", "d2f1a7c9e3b4"}
+    assert set(by_id) == {
+        "b113ca4237b0",
+        "cb474b300c35",
+        "d2f1a7c9e3b4",
+        "e4b8c2d6f1a9",
+    }
 
-    # Linear chain: GW-9 base ← REG-1 prompts ← BRA-881 api_keys.expires_at.
-    head = by_id["d2f1a7c9e3b4"]
-    assert head.down_revision == "cb474b300c35"
+    # Linear chain: GW-9 base ← REG-1 prompts ← BRA-881 api_keys.expires_at ←
+    # BRA-887 RLS tenant isolation.
+    head = by_id["e4b8c2d6f1a9"]
+    assert head.down_revision == "d2f1a7c9e3b4"
+
+    bra881 = by_id["d2f1a7c9e3b4"]
+    assert bra881.down_revision == "cb474b300c35"
 
     reg1 = by_id["cb474b300c35"]
     assert reg1.down_revision == "b113ca4237b0"

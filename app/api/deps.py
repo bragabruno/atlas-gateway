@@ -18,7 +18,7 @@ from __future__ import annotations
 from datetime import date
 from decimal import Decimal
 from functools import lru_cache
-from typing import TYPE_CHECKING, Annotated
+from typing import TYPE_CHECKING, Annotated, Any, cast
 
 import redis.asyncio as redis_async
 from fastapi import Depends, HTTPException
@@ -41,6 +41,7 @@ from app.limits.budget import MonthlyBudgetEnforcer, monthly_period
 from app.limits.ratelimit import TokenBucketRateLimiter
 from app.observability.security import record_auth_failure
 from app.providers.registry import ProviderRegistry
+from app.repositories.api_keys import key_is_active
 from app.services.chat_service import (
     BudgetEnforcer,
     ChatService,
@@ -293,15 +294,29 @@ bearer_scheme = HTTPBearer(
 )
 
 
-def require_api_key(
+async def require_api_key(
     settings: Annotated[Settings, Depends(get_settings)],
+    pool: Annotated[object | None, Depends(get_db_pool)],
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_scheme)] = None,
 ) -> str:
+    """Authenticate the bearer key.
+
+    DB-authoritative when `auth_db_enabled` is set AND a database is configured:
+    the key is validated against `api_keys` (hash + `status='active'` + not past
+    `expires_at`), so revocation and expiry take effect at runtime. Otherwise
+    (the default / offline / test path) it falls back to the env allowlist
+    (`ATLAS_API_KEYS`). Only a key *prefix* is ever logged on failure — never the
+    full key (BRA-879/881).
+    """
     if credentials is None or credentials.scheme.lower() != "bearer":
         record_auth_failure("missing")
         raise HTTPException(status_code=401, detail="missing bearer token")
     key = credentials.credentials.strip()
-    if key not in settings.api_keys:
+    if settings.auth_db_enabled and pool is not None:
+        valid = await key_is_active(cast("Any", pool), key)
+    else:
+        valid = key in settings.api_keys
+    if not valid:
         record_auth_failure("invalid", key=key)
         raise HTTPException(status_code=401, detail="invalid api key")
     return key

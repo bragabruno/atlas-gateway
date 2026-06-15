@@ -45,6 +45,13 @@ class Settings(BaseSettings):
     budget_enabled: bool = False
     guardrails_enabled: bool = False
 
+    #: Auth source (BRA-881): when on AND db_url is set, bearer keys are validated
+    #: against the `api_keys` table (hash + status + expiry), so revocation/expiry
+    #: take effect at runtime. Default OFF → the env allowlist (`api_keys`) is
+    #: authoritative, which keeps the offline / test path unchanged. Enabling it
+    #: requires the keys to be seeded with `app.repositories.api_keys.hash_key`.
+    auth_db_enabled: bool = False
+
     #: Accounting (GW-14/15): when on AND db_url is set, every non-streaming
     #: completion writes a priced `call_records` row; with Kafka also configured
     #: each row fans out as an `atlas.calls.v1` event. Default OFF.

@@ -120,6 +120,8 @@ class ApiKey(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+    #: Optional expiry — past this the key is rejected at auth time (BRA-881).
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     __table_args__ = (
         Index("idx_api_keys_hashed_secret", "hashed_secret"),

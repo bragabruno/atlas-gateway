@@ -153,7 +153,7 @@ def create_app(settings: Settings) -> FastAPI:
     # X-Request-Id header. Path only — never query strings or bodies — so no PII
     # leaks; this gives the audit trail something to correlate auth/429 events to.
     @application.middleware("http")
-    async def _access_log_middleware(
+    async def _access_log_middleware(  # pyright: ignore[reportUnusedFunction]  — registered via the decorator
         request: Request, call_next: Callable[[Request], Awaitable[Response]]
     ) -> Response:
         request_id = str(uuid.uuid4())

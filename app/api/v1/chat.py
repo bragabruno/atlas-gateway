@@ -114,9 +114,10 @@ async def chat_completions(
 ) -> ChatCompletionResponse | StreamingResponse | JSONResponse:
     try:
         if req.stream:
-            return StreamingResponse(
-                service.stream(req, api_key_id=key), media_type="text/event-stream"
-            )
+            # Awaited so admission (rate-limit/budget/guardrails) raises a clean
+            # 4xx BEFORE the 200 stream opens (GW-16/884), not mid-stream.
+            frames = await service.stream(req, api_key_id=key)
+            return StreamingResponse(frames, media_type="text/event-stream")
         return await service.complete(req, api_key_id=key)
     except UnknownModelError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc

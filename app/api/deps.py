@@ -94,8 +94,13 @@ def _build_cache(settings: Settings) -> ResponseCache | None:
 
 
 def _build_rate_limiter(settings: Settings) -> RateLimiter | None:
-    """Construct the token-bucket limiter, or `None` when not configured (default)."""
-    if not settings.rate_limit_enabled or settings.redis_url is None:
+    """Construct the token-bucket limiter, or `None` when not enabled.
+
+    Secure-by-default outside dev: stage/prod enable the limiter even without the
+    flag (still requires Redis — without it there's nothing to enforce against).
+    """
+    enabled = settings.rate_limit_enabled or settings.environment != "dev"
+    if not enabled or settings.redis_url is None:
         return None
     return TokenBucketRateLimiter(
         _redis_client(settings.redis_url),
@@ -105,8 +110,12 @@ def _build_rate_limiter(settings: Settings) -> RateLimiter | None:
 
 
 def _build_budget(settings: Settings) -> BudgetEnforcer | None:
-    """Construct the monthly budget enforcer, or `None` when not configured (default)."""
-    if not settings.budget_enabled or settings.redis_url is None:
+    """Construct the monthly budget enforcer, or `None` when not enabled.
+
+    Secure-by-default outside dev (still requires Redis to track accrued spend).
+    """
+    enabled = settings.budget_enabled or settings.environment != "dev"
+    if not enabled or settings.redis_url is None:
         return None
     today = date.today()
     period_start = today.replace(day=1)

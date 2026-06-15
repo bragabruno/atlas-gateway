@@ -322,6 +322,20 @@ async def test_rate_limit_exhaustion_raises_429(redis: FakeRedis) -> None:
     assert exc.value.retry_after >= 1
 
 
+async def test_streaming_rate_limit_raises_before_stream_opens(redis: FakeRedis) -> None:
+    """BRA-884: admission must raise on a STREAMING request before the iterator is
+    returned (it used to leak through inside the generator, bypassing the 429)."""
+    registry = ProviderRegistry({"mock": _CountingProvider("p")})
+    limiter = TokenBucketRateLimiter(redis, capacity=1, refill_per_sec=0.0001)
+    service = ChatService(registry, rate_limiter=limiter)
+
+    # `await stream(...)` runs admission; the first consumes the only token.
+    await service.stream(_request(model="mock"), api_key_id=_KEY)
+    with pytest.raises(RateLimitExceeded):
+        # The bypass would have deferred this raise into the (unconsumed) generator.
+        await service.stream(_request(model="mock"), api_key_id=_KEY)
+
+
 # --- Budget 429 -----------------------------------------------------------
 
 

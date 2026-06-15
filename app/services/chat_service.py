@@ -482,34 +482,33 @@ class ChatService:
             except Exception:
                 log.warning("budget charge failed — swallowed", exc_info=True)
 
-    def stream(
+    async def stream(
         self,
         req: ChatCompletionRequest,
         *,
         api_key_id: str = _ANON_TENANT,
     ) -> AsyncIterator[str]:
-        """Return an SSE frame iterator for a streaming completion.
+        """Resolve + run admission, then return the SSE frame iterator.
 
-        The provider is resolved eagerly (raising `UnknownModelError` before the
-        response body starts) so the controller can map it to a 404; the
-        returned async generator yields the OpenAI-compatible `data:` frames.
-        Pre-checks (rate-limit, budget, pre-guardrails, prompt resolution) run
-        before the first frame; post-guardrails and cache get/set are skipped on
-        the streamed path (see the module docstring).
+        Admission (rate-limit, budget, pre-guardrails, prompt resolution) runs
+        HERE — awaited before the iterator is returned — so `RateLimitExceeded`,
+        `BudgetExceeded`, `GuardrailRejection`, and `UnknownModelError` surface to
+        the controller as a clean 4xx BEFORE the 200 stream opens. (Previously
+        they ran lazily inside the generator, after the response status was
+        committed — a rate-limit/budget 429 bypass on the streamed path.)
+        Post-guardrails and cache get/set remain skipped while streaming.
         """
         provider = self._resolve(req.model)
-        return self._stream_frames(req, provider, api_key_id=api_key_id)
+        base_messages = self._provider_messages(req)
+        messages, _ = await self._pre_checks(req, base_messages, api_key_id=api_key_id)
+        return self._stream_frames(req, provider, messages)
 
     async def _stream_frames(
         self,
         req: ChatCompletionRequest,
         provider: Provider,
-        *,
-        api_key_id: str,
+        messages: list[Message],
     ) -> AsyncIterator[str]:
-        base_messages = self._provider_messages(req)
-        messages, _ = await self._pre_checks(req, base_messages, api_key_id=api_key_id)
-
         completion_id = f"chatcmpl-{uuid.uuid4().hex}"
         created = int(time.time())
 

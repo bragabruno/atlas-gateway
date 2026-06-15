@@ -108,7 +108,11 @@ class AccountingRecorder:
         else:
             rates = self._rates.get(call.model, _ZERO_RATES)
         if rates is _ZERO_RATES:
-            log.warning(
+            # DEBUG, not WARNING: zero rates are expected for mock / unpriced local
+            # models, which dominate dev traffic — a warning per call is just noise.
+            # The genuinely-unexpected case (a configured alias missing from the
+            # rate table) already logged a WARNING above.
+            log.debug(
                 "no rate for alias=%s / model=%s — pricing at zero",
                 call.alias,
                 call.model,

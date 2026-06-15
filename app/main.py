@@ -158,18 +158,24 @@ def create_app(settings: Settings) -> FastAPI:
     ) -> Response:
         request_id = str(uuid.uuid4())
         start = time.perf_counter()
-        response = await call_next(request)
-        duration_ms = (time.perf_counter() - start) * 1000
-        _access_log.info(
-            "request method=%s path=%s status=%d dur_ms=%.1f request_id=%s",
-            request.method,
-            request.url.path,
-            response.status_code,
-            duration_ms,
-            request_id,
-        )
-        response.headers["X-Request-Id"] = request_id
-        return response
+        # If call_next raises (unhandled 5xx), the framework still returns a 500 —
+        # so log in `finally` to guarantee one correlatable line per request, with
+        # the request id, even on failures. Default status reflects that 5xx.
+        status = 500
+        try:
+            response = await call_next(request)
+            status = response.status_code
+            response.headers["X-Request-Id"] = request_id
+            return response
+        finally:
+            _access_log.info(
+                "request method=%s path=%s status=%d dur_ms=%.1f request_id=%s",
+                request.method,
+                request.url.path,
+                status,
+                (time.perf_counter() - start) * 1000,
+                request_id,
+            )
 
     application.include_router(chat_router)
     application.include_router(models_router)

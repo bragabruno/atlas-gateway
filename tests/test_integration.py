@@ -174,6 +174,29 @@ class _FakeRecorder:
         self.records.append(call)
 
 
+class _PricingRecorder:
+    """Recorder that prices every call at a fixed cost (exercises budget wiring)."""
+
+    def __init__(self, cost: Decimal) -> None:
+        self.cost = cost
+
+    async def record(self, call: CallContext) -> Decimal:
+        return self.cost
+
+
+class _CapturingBudget:
+    """Budget enforcer that captures charges and never enforces the cap."""
+
+    def __init__(self) -> None:
+        self.charged: list[tuple[str, Decimal]] = []
+
+    async def check(self, *, api_key_id: str, cost: Decimal) -> None:
+        return None
+
+    async def charge(self, *, api_key_id: str, cost: Decimal) -> None:
+        self.charged.append((api_key_id, cost))
+
+
 def _real_pre_chain() -> GuardrailChain:
     """The real pre-phase guardrail chain (size + injection + PII redaction)."""
     return GuardrailChain(pre=(SizeGuardrail(), InjectionGuardrail(), PiiGuardrail()))
@@ -377,6 +400,18 @@ async def test_recorder_receives_one_call_context() -> None:
     assert call.api_key_id == _KEY
     assert call.model == "mock"
     assert call.usage.output_tokens == 2
+
+
+async def test_realized_cost_is_charged_to_budget() -> None:
+    """BRA-885: the recorder's priced cost must be charged to the monthly budget
+    so the cap actually accrues (previously charge() was never called)."""
+    registry = ProviderRegistry({"mock": _CountingProvider("p")})
+    budget = _CapturingBudget()
+    service = ChatService(registry, recorder=_PricingRecorder(Decimal("0.05")), budget=budget)
+
+    await service.complete(_request(model="mock"), api_key_id=_KEY)
+
+    assert budget.charged == [(_KEY, Decimal("0.05"))]
 
 
 # --- Full wired stack -----------------------------------------------------

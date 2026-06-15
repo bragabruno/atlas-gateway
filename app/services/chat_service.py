@@ -41,6 +41,7 @@ streaming-aware guardrails that inspect the assembled transcript).
 
 from __future__ import annotations
 
+import logging
 import time
 import uuid
 from collections.abc import AsyncIterator, Mapping, Sequence
@@ -64,6 +65,8 @@ from app.domain.openai import (
 from app.guardrails.chain import GuardrailContext
 from app.providers.base import Provider
 from app.providers.registry import ProviderRegistry
+
+log = logging.getLogger(__name__)
 
 #: Sentinel tenant id used when no authenticated key is threaded through (the
 #: unconfigured default path never consults a tenant-scoped collaborator, so the
@@ -211,7 +214,7 @@ class Recorder(Protocol):
     request path — accounting failures are swallowed by the adapters (GW-15).
     """
 
-    async def record(self, call: CallContext) -> None: ...
+    async def record(self, call: CallContext) -> Decimal | None: ...
 
 
 class PromptRegistry(Protocol):
@@ -458,12 +461,14 @@ class ChatService:
         so accounting can never fail or stall the user's completion. The seam is
         passed the realized `Usage`, the resolved model, and the request `alias`
         (which pricing is keyed by) so the adapter can price and emit the
-        `call_records` row and `atlas.calls.v1` event.
+        `call_records` row and `atlas.calls.v1` event. The recorder returns the
+        priced cost, which is then charged against the monthly budget (GW-17) so
+        the cap actually accrues — also swallowing failures off the request path.
         """
         recorder = self._recorder
         if recorder is None:
             return
-        await recorder.record(
+        cost = await recorder.record(
             CallContext(
                 api_key_id=api_key_id,
                 model=result.model,
@@ -471,6 +476,11 @@ class ChatService:
                 alias=alias,
             )
         )
+        if self._budget is not None and cost is not None:
+            try:
+                await self._budget.charge(api_key_id=api_key_id, cost=cost)
+            except Exception:
+                log.warning("budget charge failed — swallowed", exc_info=True)
 
     def stream(
         self,

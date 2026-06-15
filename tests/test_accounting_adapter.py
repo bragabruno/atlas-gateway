@@ -122,6 +122,29 @@ async def test_record_prices_by_alias_not_resolved_model() -> None:
 
 
 @pytest.mark.asyncio
+async def test_record_falls_back_to_model_price_when_alias_unpriced() -> None:
+    """When the alias is missing from the rate table but the resolved model id IS
+    priced, pricing falls back to the model price — not to $0."""
+    conn = _FakeConn()
+    adapter = AccountingRecorder(
+        CallRecorder(conn),
+        rates={"claude-sonnet-4-6": Rates(in_per_1m=Decimal("3.00"), out_per_1m=Decimal("15.00"))},
+    )
+
+    await adapter.record(
+        CallContext(
+            api_key_id="dev-key",
+            model="claude-sonnet-4-6",  # priced by model id
+            usage=Usage(input_tokens=1000, output_tokens=500),
+            alias="smart",  # NOT a key in the rate map
+        )
+    )
+
+    _, args = conn.executed[0]
+    assert args[11] == Decimal("0.0105")  # priced via the model id, not $0
+
+
+@pytest.mark.asyncio
 async def test_unknown_model_prices_at_zero() -> None:
     conn = _FakeConn()
     adapter = AccountingRecorder(CallRecorder(conn), rates={})

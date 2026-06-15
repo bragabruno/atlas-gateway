@@ -96,7 +96,23 @@ class AccountingRecorder:
     def _to_record(self, call: CallContext) -> CallRecord:
         # Price by the request alias (what the rate table is keyed by); fall back
         # to the resolved model id, then to zero (mock / unpriced local models).
-        rates = self._rates.get(call.alias or call.model, _ZERO_RATES)
+        if call.alias is not None:
+            rates = self._rates.get(call.alias)
+            if rates is None:
+                log.warning(
+                    "no rate for alias=%s — falling back to model=%s",
+                    call.alias,
+                    call.model,
+                )
+                rates = self._rates.get(call.model, _ZERO_RATES)
+        else:
+            rates = self._rates.get(call.model, _ZERO_RATES)
+        if rates is _ZERO_RATES:
+            log.warning(
+                "no rate for alias=%s / model=%s — pricing at zero",
+                call.alias,
+                call.model,
+            )
         return CallRecord(
             id=uuid.uuid4(),
             api_key_id=api_key_uuid(call.api_key_id),

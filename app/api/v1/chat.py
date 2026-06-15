@@ -44,37 +44,33 @@ router = APIRouter()
 #: date, not an instant); a same-day reset still yields a positive header.
 _SECONDS_PER_DAY = 24 * 60 * 60
 
-#: Documents the dual content type on `POST /v1/chat/completions`: non-streaming
-#: requests get `application/json` (ChatCompletionResponse), streaming requests
-#: get `text/event-stream` (SSE-framed `chat.completion.chunk` deltas). FastAPI
-#: doesn't infer SSE bodies from the return type, so we declare it explicitly.
-_CHAT_RESPONSES: dict[int | str, dict[str, object]] = {
-    200: {
-        "description": "Chat completion (JSON) or SSE stream of `chat.completion.chunk` deltas.",
-        "content": {
-            "application/json": {
-                "schema": {"$ref": "#/components/schemas/ChatCompletionResponse"},
-            },
-            "text/event-stream": {
-                "schema": {
-                    "type": "string",
-                    "description": (
-                        "Server-Sent Events. Each line `data: {json}` carries a "
-                        "`ChatCompletionChunk`. Terminator: `data: [DONE]`."
-                    ),
-                },
-                "example": (
-                    'data: {"id":"chatcmpl-1","object":"chat.completion.chunk",'
-                    '"created":1735689600,"model":"mock",'
-                    '"choices":[{"index":0,"delta":{"role":"assistant"}}]}\n\n'
-                    'data: {"id":"chatcmpl-1","object":"chat.completion.chunk",'
-                    '"created":1735689600,"model":"mock",'
-                    '"choices":[{"index":0,"delta":{"content":"Hi"}}]}\n\n'
-                    "data: [DONE]\n\n"
-                ),
-            },
+#: The `text/event-stream` content block on the 200 response: SSE-framed
+#: `chat.completion.chunk` deltas. FastAPI doesn't infer SSE bodies from the
+#: return type, so we declare it explicitly (spliced into `_CHAT_RESPONSES`).
+_SSE_STREAM_CONTENT: dict[str, object] = {
+    "text/event-stream": {
+        "schema": {
+            "type": "string",
+            "description": (
+                "Server-Sent Events. Each line `data: {json}` carries a "
+                "`ChatCompletionChunk`. Terminator: `data: [DONE]`."
+            ),
         },
+        "example": (
+            'data: {"id":"chatcmpl-1","object":"chat.completion.chunk",'
+            '"created":1735689600,"model":"mock",'
+            '"choices":[{"index":0,"delta":{"role":"assistant"}}]}\n\n'
+            'data: {"id":"chatcmpl-1","object":"chat.completion.chunk",'
+            '"created":1735689600,"model":"mock",'
+            '"choices":[{"index":0,"delta":{"content":"Hi"}}]}\n\n'
+            "data: [DONE]\n\n"
+        ),
     },
+}
+
+#: The error responses (401/404/422/429) on `POST /v1/chat/completions`; each
+#: is an `ErrorEnvelope` (spliced into `_CHAT_RESPONSES`).
+_ERROR_RESPONSES: dict[int | str, dict[str, object]] = {
     401: {"model": ErrorEnvelope, "description": "Missing or invalid Bearer key."},
     404: {"model": ErrorEnvelope, "description": "Unknown model — no provider/alias matched."},
     422: {
@@ -91,6 +87,22 @@ _CHAT_RESPONSES: dict[int | str, dict[str, object]] = {
             "(seconds). Body shape matches atlas-docs/03 §5.2."
         ),
     },
+}
+
+#: Documents the dual content type on `POST /v1/chat/completions`: non-streaming
+#: requests get `application/json` (ChatCompletionResponse), streaming requests
+#: get `text/event-stream` (SSE-framed `chat.completion.chunk` deltas).
+_CHAT_RESPONSES: dict[int | str, dict[str, object]] = {
+    200: {
+        "description": "Chat completion (JSON) or SSE stream of `chat.completion.chunk` deltas.",
+        "content": {
+            "application/json": {
+                "schema": {"$ref": "#/components/schemas/ChatCompletionResponse"},
+            },
+            **_SSE_STREAM_CONTENT,
+        },
+    },
+    **_ERROR_RESPONSES,
 }
 
 

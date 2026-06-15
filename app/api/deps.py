@@ -32,6 +32,7 @@ if TYPE_CHECKING:
 from app.cache.exact import ExactCache
 from app.config import Settings, get_settings
 from app.guardrails.chain import GuardrailChain
+from app.guardrails.content_policy import ContentPolicyGuardrail
 from app.guardrails.injection import InjectionGuardrail
 from app.guardrails.pii import PiiGuardrail
 from app.guardrails.size import SizeGuardrail
@@ -118,17 +119,24 @@ def _build_budget(settings: Settings) -> BudgetEnforcer | None:
 
 
 def _build_guardrails(settings: Settings) -> GuardrailRunner | None:
-    """Construct the pre-guardrail chain, or `None` when not configured (default).
+    """Construct the guardrail chain, or `None` when not enabled.
 
-    Pure-Python (no Redis/DB), so it gates on its flag alone. Only the pre-phase
-    request guardrails (size, injection, PII redaction) are wired here; the
-    post-phase guardrails (schema/content/citation) need per-route schema and a
-    citation verifier and are composed by their own wiring tickets.
+    Secure-by-default outside dev: stage/prod build the chain even when the
+    `guardrails_enabled` flag is unset, so PII redaction and content screening
+    are on by default in real deployments; `dev` stays opt-in so the offline /
+    test path is byte-for-byte unchanged.
+
+    Wires the pre-phase request guardrails (size, injection, PII redaction) and
+    the post-phase `content_policy` screen (leaked credentials / system prompt)
+    over the response. `citation` enforcement still needs a `CitationVerifier`
+    injected at the composition root and is wired by its own ticket; `schema`
+    repair needs per-route schema.
     """
-    if not settings.guardrails_enabled:
+    if not (settings.guardrails_enabled or settings.environment != "dev"):
         return None
     return GuardrailChain(
         pre=(SizeGuardrail(), InjectionGuardrail(), PiiGuardrail()),
+        post=(ContentPolicyGuardrail(),),
     )
 
 

@@ -35,5 +35,8 @@ htmlcov/
 .DS_Store
 Thumbs.db
 
+# Editor
+.vscode/
+
 # Trunk (machine-local linter cache — symlinks into ~/.cache/trunk)
 .trunk/

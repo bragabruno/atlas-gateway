@@ -1,94 +1,143 @@
-"""GRD-3 — PII NER guardrail (Presidio, off inline path).
+"""GRD-3 — PII NER (off inline path) tests.
 
-Tests mock out the Presidio AnalyzerEngine so no model download or presidio
-install is required locally. The mock injects fake analysis results to exercise
-the guardrail logic. Skip the whole module if presidio is not installed.
+Pins: the NER stand-in catches novel free-text PII formats the GRD-2 regex
+fast-path misses (person names, street addresses, IBAN, IP); the analyzer is
+non-mutating (off-inline-path posture, atlas-docs/05 §2.1) so the live context is
+never rewritten; reject mode raises with category counts only and never leaks raw
+PII; the detector seam is injectable so a pinned Presidio/GLiNER backend can drop
+in later. Fully offline (dependency-free stand-in). See GRD-3 + GRD-2 + ADR-016.
 """
 
-# These tests inject a fake analyzer onto the guardrail's protected `_analyzer`
-# attribute — poking internals is the point of the unit test.
-# pyright: reportPrivateUsage=false
 from __future__ import annotations
 
-import importlib.util
-from types import SimpleNamespace
-from unittest.mock import MagicMock
+from collections.abc import Sequence
 
 import pytest
 
-if importlib.util.find_spec("presidio_analyzer") is None:
-    pytest.skip("presidio-analyzer not installed", allow_module_level=True)
-
 from app.domain.messages import Message
-from app.guardrails.chain import GuardrailContext, GuardrailRejection
-from app.guardrails.pii_ner import PiiNerGuardrail
+from app.guardrails.chain import Guardrail, GuardrailContext, GuardrailRejection
+from app.guardrails.pii import PiiGuardrail, PiiMode
+from app.guardrails.pii_ner import (
+    ExtendedPatternNer,
+    NerFindings,
+    PiiNerDetector,
+    PiiNerGuardrail,
+)
 
-_MESSAGES = [Message(role="user", content="My name is John Smith")]
 
-
-def _ctx(messages: list[Message] | None = None) -> GuardrailContext:
+def _ctx(*contents: str) -> GuardrailContext:
     return GuardrailContext(
-        tenant_id="t1",
+        tenant_id="tenant-a",
         model="mock",
-        messages=messages or _MESSAGES,
+        messages=[Message(role="user", content=c) for c in contents],
     )
 
 
-def _fake_result(entity_type: str) -> SimpleNamespace:
-    return SimpleNamespace(entity_type=entity_type)
+# ── catches formats GRD-2 regex misses ──────────────────────────────────────
 
 
-@pytest.mark.asyncio
-async def test_pii_ner_passes_when_no_entities_detected() -> None:
-    guardrail = PiiNerGuardrail()
-    mock_analyzer = MagicMock()
-    mock_analyzer.analyze.return_value = []
-    guardrail._analyzer = mock_analyzer
-    await guardrail.check(_ctx())  # should not raise
+@pytest.mark.parametrize(
+    ("content", "category"),
+    [
+        ("please contact Dr. Jane Smith about it", "PERSON"),
+        ("ship it to 1600 Pennsylvania Avenue", "ADDRESS"),
+        ("transfer to GB82WEST12345698765432 today", "IBAN"),
+        ("the server is at 192.168.10.254 right now", "IP_ADDRESS"),
+    ],
+)
+async def test_ner_catches_novel_formats(content: str, category: str) -> None:
+    findings = ExtendedPatternNer().analyze([Message(role="user", content=content)])
+    assert findings.detected
+    assert category in findings.counts
 
 
-@pytest.mark.asyncio
-async def test_pii_ner_rejects_when_person_entity_detected() -> None:
-    guardrail = PiiNerGuardrail()
-    mock_analyzer = MagicMock()
-    mock_analyzer.analyze.return_value = [_fake_result("PERSON")]
-    guardrail._analyzer = mock_analyzer
+async def test_grd2_regex_misses_what_ner_catches() -> None:
+    # The discriminating case: a person name carries no email/phone/SSN/card, so
+    # the GRD-2 regex fast-path leaves it untouched — proving NER adds recall.
+    text = "please contact Dr. Jane Smith about it"
+    ctx = _ctx(text)
+    await PiiGuardrail().check(ctx)
+    assert ctx.messages[0].content == text  # GRD-2 found nothing to redact
+
+    findings = ExtendedPatternNer().analyze([Message(role="user", content=text)])
+    assert findings.counts["PERSON"] == 1  # GRD-3 NER catches it
+
+
+# ── off-inline-path design: analyzer is non-mutating ────────────────────────
+
+
+async def test_analyze_does_not_mutate_context() -> None:
+    ctx = _ctx("ship it to 1600 Pennsylvania Avenue")
+    PiiNerGuardrail().analyze(ctx.messages)
+    # Off-path posture: the live inline context is never rewritten.
+    assert ctx.messages[0].content == "ship it to 1600 Pennsylvania Avenue"
+
+
+async def test_redact_mode_check_is_non_mutating() -> None:
+    ctx = _ctx("ship it to 1600 Pennsylvania Avenue")
+    await PiiNerGuardrail(mode=PiiMode.REDACT).check(ctx)
+    # REDACT mode passes without rewriting the inline context (off-path).
+    assert ctx.messages[0].content == "ship it to 1600 Pennsylvania Avenue"
+
+
+async def test_findings_carry_redacted_copies() -> None:
+    findings = ExtendedPatternNer().analyze([Message(role="user", content="ping Dr. Jane Smith")])
+    assert findings.redacted_messages[0].content == "ping [PII:PERSON]"
+
+
+async def test_clean_input_yields_no_findings() -> None:
+    findings = ExtendedPatternNer().analyze(
+        [Message(role="user", content="just a normal harmless sentence")]
+    )
+    assert not findings.detected
+    assert findings.counts == {}
+
+
+# ── reject mode: counts only, never raw PII ─────────────────────────────────
+
+
+async def test_reject_mode_raises_with_counts_only() -> None:
+    ctx = _ctx("contact Dr. Jane Smith at 1600 Pennsylvania Avenue")
     with pytest.raises(GuardrailRejection) as exc_info:
-        await guardrail.check(_ctx())
-    assert "PERSON" in exc_info.value.reason
-    assert exc_info.value.guardrail == "pii_ner"
+        await PiiNerGuardrail(mode=PiiMode.REJECT).check(ctx)
+    rejection = exc_info.value
+    assert rejection.guardrail == "pii_ner"
+    assert "PERSON=1" in rejection.reason
+    assert "ADDRESS=1" in rejection.reason
 
 
-@pytest.mark.asyncio
-async def test_pii_ner_rejects_with_all_detected_types_in_reason() -> None:
-    guardrail = PiiNerGuardrail()
-    mock_analyzer = MagicMock()
-    mock_analyzer.analyze.return_value = [
-        _fake_result("PERSON"),
-        _fake_result("LOCATION"),
-    ]
-    guardrail._analyzer = mock_analyzer
+async def test_reject_reason_never_leaks_raw_pii() -> None:
+    ctx = _ctx("the account is GB82WEST12345698765432 confidential")
     with pytest.raises(GuardrailRejection) as exc_info:
-        await guardrail.check(_ctx())
-    assert "PERSON" in exc_info.value.reason
-    assert "LOCATION" in exc_info.value.reason
+        await PiiNerGuardrail(mode=PiiMode.REJECT).check(ctx)
+    assert "GB82WEST12345698765432" not in str(exc_info.value)
 
 
-@pytest.mark.asyncio
-async def test_pii_ner_checks_all_messages() -> None:
-    clean = Message(role="user", content="Tell me about regulations")
-    pii = Message(role="assistant", content="Response from Jane Doe")
-    guardrail = PiiNerGuardrail()
-    call_count = 0
+async def test_clean_input_passes_in_reject_mode() -> None:
+    await PiiNerGuardrail(mode=PiiMode.REJECT).check(_ctx("a perfectly clean message"))
 
-    def analyze_side_effect(text: str, **_: object) -> list[object]:
-        nonlocal call_count
-        call_count += 1
-        return [_fake_result("PERSON")] if "Jane" in text else []
 
-    mock_analyzer = MagicMock()
-    mock_analyzer.analyze.side_effect = analyze_side_effect
-    guardrail._analyzer = mock_analyzer
-    with pytest.raises(GuardrailRejection):
-        await guardrail.check(_ctx(messages=[clean, pii]))
-    assert call_count >= 1
+async def test_default_mode_is_redact() -> None:
+    assert PiiNerGuardrail().mode is PiiMode.REDACT
+
+
+# ── injectable seam: a pinned Presidio/GLiNER backend can drop in later ──────
+
+
+async def test_detector_seam_is_injectable() -> None:
+    class _FakeNer:
+        def analyze(self, messages: Sequence[Message]) -> NerFindings:
+            return NerFindings(counts={"PERSON": 1}, redacted_messages=tuple(messages))
+
+    guard = PiiNerGuardrail(mode=PiiMode.REJECT, detector=_FakeNer())
+    with pytest.raises(GuardrailRejection) as exc_info:
+        await guard.check(_ctx("anything"))
+    assert "PERSON=1" in exc_info.value.reason
+
+
+async def test_extended_pattern_ner_conforms_to_detector_protocol() -> None:
+    assert isinstance(ExtendedPatternNer(), PiiNerDetector)
+
+
+async def test_conforms_to_guardrail_protocol() -> None:
+    assert isinstance(PiiNerGuardrail(), Guardrail)

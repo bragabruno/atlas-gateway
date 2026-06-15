@@ -92,6 +92,11 @@ class CallContext:
     #: alias — `model` is the *resolved* provider id, which the rate table isn't
     #: keyed by — so the adapter prices off this when present.
     alias: str | None = None
+    #: Resolved prompt version (REG-4) when the request carried a `prompt_ref`;
+    #: ``NO_PROMPT_VERSION`` otherwise. The composition-root adapter maps this to
+    #: `CallRecord.prompt_version_id` (None for the sentinel) so accounting rows
+    #: attribute spend to the prompt version that produced them.
+    prompt_version: str = NO_PROMPT_VERSION
 
 
 class RateLimiter(Protocol):
@@ -405,9 +410,13 @@ class ChatService:
         result = await self._call_provider(req, messages)
         response = self._to_response(result)
 
-        # (7) accounting record + Kafka event (never fails the request).
+        # (7) accounting record + Kafka event (never fails the request). The
+        # resolved prompt_version (REG-4) is threaded through so the row
+        # attributes spend to the prompt version that produced the response.
         if self._recorder is not None:
-            await self._record(result, api_key_id=api_key_id, alias=req.model)
+            await self._record(
+                result, api_key_id=api_key_id, alias=req.model, prompt_version=prompt_version
+            )
 
         # (8) post-guardrails — schema/content/citation over the response.
         if self._guardrails is not None:
@@ -453,15 +462,21 @@ class ChatService:
         )
 
     async def _record(
-        self, result: ChatResult, *, api_key_id: str, alias: str | None = None
+        self,
+        result: ChatResult,
+        *,
+        api_key_id: str,
+        alias: str | None = None,
+        prompt_version: str = NO_PROMPT_VERSION,
     ) -> None:
         """Hand the call to the accounting seam (GW-14/15).
 
         The recorder owns pricing/persistence/Kafka and swallows its own errors,
         so accounting can never fail or stall the user's completion. The seam is
-        passed the realized `Usage`, the resolved model, and the request `alias`
-        (which pricing is keyed by) so the adapter can price and emit the
-        `call_records` row and `atlas.calls.v1` event. The recorder returns the
+        passed the realized `Usage`, the resolved model, the request `alias`
+        (which pricing is keyed by), and the resolved `prompt_version` (REG-4) so
+        the adapter can price and emit the `call_records` row (with its
+        `prompt_version_id`) and `atlas.calls.v1` event. The recorder returns the
         priced cost, which is then charged against the monthly budget (GW-17) so
         the cap actually accrues — also swallowing failures off the request path.
         """
@@ -474,6 +489,7 @@ class ChatService:
                 model=result.model,
                 usage=result.usage,
                 alias=alias,
+                prompt_version=prompt_version,
             )
         )
         if self._budget is not None and cost is not None:

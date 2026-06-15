@@ -24,8 +24,6 @@ ENV PATH="/venv/bin:${PATH}" \
     PYTHONDONTWRITEBYTECODE=1
 USER app
 EXPOSE 8000
-# FastAPI app served by uvicorn on :8000. Config is env-driven (ATLAS_ prefix);
-# with no ATLAS_REDIS_URL / provider keys the gateway runs Mock-only (model=mock,
-# MockProvider — ADR-012). Real deployments inject ATLAS_* per-env via the Key
-# Vault CSI mount (atlas-docs/04); the image ships no secrets.
+# OpenAI-compatible gateway (FastAPI/ASGI). Real provider keys + Key Vault CSI are
+# injected per-env at deploy time (atlas-docs/04); the image ships no secrets.
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

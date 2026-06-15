@@ -75,8 +75,10 @@ class Settings(BaseSettings):
     cors_allow_origins: tuple[str, ...] = ()
 
     #: Provider API keys — sourced from Key Vault via CSI in real deployments,
-    #: set as env vars locally. A ``None`` value means that provider is absent;
-    #: the registry will only wire providers whose keys are present (GW-3/4/5).
+    #: set as env vars locally. A real provider (GW-3..5) is registered only when
+    #: its key is present; with the defaults (no keys) the registry stays
+    #: Mock-only, exactly the pre-wiring behaviour the default and test
+    #: environments rely on.
     anthropic_api_key: str | None = None
     openai_api_key: str | None = None
     google_api_key: str | None = None
@@ -89,6 +91,13 @@ class Settings(BaseSettings):
     #: chat request for that id routes to Ollama instead of the mock provider.
     ollama_base_url: str | None = None
     ollama_models: tuple[str, ...] = ()
+
+    #: Streamable-HTTP endpoint of the ``mcp-citations`` server (AGT-12). ``None``
+    #: (default) means no live citation verifier is built, so the GRD-9 citation
+    #: guardrail keeps its stub/unwired default and the request path is unchanged.
+    #: A real deployment sets ATLAS_CITATION_MCP_URL so the composition root can
+    #: build an `McpToolClient` and inject the live `McpCitationVerifier`.
+    citation_mcp_url: str | None = None
 
 
 def get_settings() -> Settings:

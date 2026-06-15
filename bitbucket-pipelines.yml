@@ -1,0 +1,65 @@
+# Bitbucket Pipelines — atlas-gateway.
+#
+# Orchestration only: every gate calls a versioned script under scripts/ (the
+# single source of truth). Run `make ci` locally for the same gates. Logic lives
+# in scripts/, not in this file. See atlas-docs/07-build-system.md.
+#
+# Gate 1a (scripts/lint.sh): dep age audit (XCUT-4) + Trunk(ruff) + pyright.
+# Gate 1b (scripts/test.sh): offline pytest (MockProvider + fakeredis; zero spend).
+# XCUT-6  (scripts/validate_diagrams.sh): Mermaid + PlantUML diagram validation.
+#
+# Image pinned exactly (atlas-docs/02 §2). Auth, where needed, is OIDC / repo
+# secrets referenced by name only — no secret values in this file.
+
+image: python:3.12.13-slim-bookworm  # 3.12.13 (2026-03-03)
+
+definitions:
+  caches:
+    pip-cache: ~/.cache/pip
+    trunk-cache: ~/.cache/trunk
+
+  steps:
+    - step: &lint
+        name: "Gate 1a — Lint, Typecheck & Dep-audit (scripts/lint.sh)"
+        caches: [pip-cache, trunk-cache]
+        script:
+          # Env prep only; all validation logic is in scripts/lint.sh. Trunk is
+          # git-native and fetches its tools at runtime, so the slim image needs
+          # git + curl + network (still zero LLM/API spend).
+          - apt-get update && apt-get install -y --no-install-recommends git curl ca-certificates
+          - pip install --quiet -e ".[dev]"
+          - curl -fsSL https://get.trunk.io | bash -s -- -y
+          - ./scripts/lint.sh
+
+    - step: &unit-tests
+        name: "Gate 1b — Unit Tests (scripts/test.sh)"
+        caches: [pip-cache]
+        script:
+          - pip install --quiet -e ".[dev]"
+          - ./scripts/test.sh
+
+    - step: &diagram-validation
+        name: "XCUT-6 — Diagram validation (scripts/validate_diagrams.sh)"
+        image: node:22.22.2-bookworm-slim  # 22.22.2 (2026-03-24)
+        script:
+          # JRE for PlantUML + Chromium deps for mermaid-cli headless render.
+          - apt-get update && apt-get install -y --no-install-recommends
+              default-jre-headless chromium fonts-liberation
+          # Pinned PlantUML jar (1.2026.3, 2026-05-08) from the GitHub release.
+          - export PLANTUML_VERSION=1.2026.3
+          - curl -fsSL -o /tmp/plantuml.jar
+              "https://github.com/plantuml/plantuml/releases/download/v${PLANTUML_VERSION}/plantuml-${PLANTUML_VERSION}.jar"
+          - export PLANTUML_JAR=/tmp/plantuml.jar
+          # mermaid-cli (11.14.0) runs headless via the system Chromium.
+          - export PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
+          - printf '{"args":["--no-sandbox"]}' > /tmp/puppeteer.json
+          - export PUPPETEER_CONFIG=/tmp/puppeteer.json
+          - ./scripts/validate_diagrams.sh docs/diagrams
+
+pipelines:
+  pull-requests:
+    "**":
+      - parallel:
+          - step: *lint
+          - step: *unit-tests
+          - step: *diagram-validation

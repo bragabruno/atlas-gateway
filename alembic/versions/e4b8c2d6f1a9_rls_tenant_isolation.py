@@ -48,11 +48,13 @@ def enable_sql(table: str) -> list[str]:
     return [
         f"ALTER TABLE {table} ENABLE ROW LEVEL SECURITY",
         f"ALTER TABLE {table} FORCE ROW LEVEL SECURITY",
-        # Reads: only rows whose api_key_id matches the per-connection GUC. An
-        # unset GUC → current_setting(..., true) is NULL → api_key_id = NULL is
-        # never true → no rows (fail closed).
+        # Reads: only rows whose api_key_id matches the per-connection GUC. The
+        # GUC is unset (NULL) OR — once a SET LOCAL has run on a pooled connection
+        # and the txn ended — an empty string; NULLIF('') collapses both to NULL,
+        # so api_key_id = NULL is never true → no rows (fail closed). Casting ''
+        # straight to uuid would instead raise, so the NULLIF is load-bearing.
         f"CREATE POLICY {table}_read_tenant ON {table} "
-        f"FOR SELECT USING (api_key_id = current_setting('{TENANT_GUC}', true)::uuid)",
+        f"FOR SELECT USING (api_key_id = NULLIF(current_setting('{TENANT_GUC}', true), '')::uuid)",
         # Writes: server-controlled (the recorder sets api_key_id from the
         # authenticated key), so the insert path needn't set the GUC.
         f"CREATE POLICY {table}_insert_server ON {table} FOR INSERT WITH CHECK (true)",

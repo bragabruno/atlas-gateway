@@ -18,7 +18,7 @@ from __future__ import annotations
 from datetime import date
 from decimal import Decimal
 from functools import lru_cache
-from typing import TYPE_CHECKING, Annotated
+from typing import TYPE_CHECKING, Annotated, Any, cast
 
 import redis.asyncio as redis_async
 from fastapi import Depends, HTTPException
@@ -32,13 +32,16 @@ if TYPE_CHECKING:
 from app.cache.exact import ExactCache
 from app.config import Settings, get_settings
 from app.guardrails.chain import GuardrailChain
+from app.guardrails.content_policy import ContentPolicyGuardrail
 from app.guardrails.injection import InjectionGuardrail
 from app.guardrails.pii import PiiGuardrail
 from app.guardrails.size import SizeGuardrail
 from app.limits._redis_typing import create_redis_client
 from app.limits.budget import MonthlyBudgetEnforcer, monthly_period
 from app.limits.ratelimit import TokenBucketRateLimiter
+from app.observability.security import record_auth_failure
 from app.providers.registry import ProviderRegistry
+from app.repositories.api_keys import key_is_active
 from app.services.chat_service import (
     BudgetEnforcer,
     ChatService,
@@ -92,8 +95,13 @@ def _build_cache(settings: Settings) -> ResponseCache | None:
 
 
 def _build_rate_limiter(settings: Settings) -> RateLimiter | None:
-    """Construct the token-bucket limiter, or `None` when not configured (default)."""
-    if not settings.rate_limit_enabled or settings.redis_url is None:
+    """Construct the token-bucket limiter, or `None` when not enabled.
+
+    Secure-by-default outside dev: stage/prod enable the limiter even without the
+    flag (still requires Redis — without it there's nothing to enforce against).
+    """
+    enabled = settings.rate_limit_enabled or settings.environment != "dev"
+    if not enabled or settings.redis_url is None:
         return None
     return TokenBucketRateLimiter(
         _redis_client(settings.redis_url),
@@ -103,8 +111,12 @@ def _build_rate_limiter(settings: Settings) -> RateLimiter | None:
 
 
 def _build_budget(settings: Settings) -> BudgetEnforcer | None:
-    """Construct the monthly budget enforcer, or `None` when not configured (default)."""
-    if not settings.budget_enabled or settings.redis_url is None:
+    """Construct the monthly budget enforcer, or `None` when not enabled.
+
+    Secure-by-default outside dev (still requires Redis to track accrued spend).
+    """
+    enabled = settings.budget_enabled or settings.environment != "dev"
+    if not enabled or settings.redis_url is None:
         return None
     today = date.today()
     period_start = today.replace(day=1)
@@ -117,17 +129,24 @@ def _build_budget(settings: Settings) -> BudgetEnforcer | None:
 
 
 def _build_guardrails(settings: Settings) -> GuardrailRunner | None:
-    """Construct the pre-guardrail chain, or `None` when not configured (default).
+    """Construct the guardrail chain, or `None` when not enabled.
 
-    Pure-Python (no Redis/DB), so it gates on its flag alone. Only the pre-phase
-    request guardrails (size, injection, PII redaction) are wired here; the
-    post-phase guardrails (schema/content/citation) need per-route schema and a
-    citation verifier and are composed by their own wiring tickets.
+    Secure-by-default outside dev: stage/prod build the chain even when the
+    `guardrails_enabled` flag is unset, so PII redaction and content screening
+    are on by default in real deployments; `dev` stays opt-in so the offline /
+    test path is byte-for-byte unchanged.
+
+    Wires the pre-phase request guardrails (size, injection, PII redaction) and
+    the post-phase `content_policy` screen (leaked credentials / system prompt)
+    over the response. `citation` enforcement still needs a `CitationVerifier`
+    injected at the composition root and is wired by its own ticket; `schema`
+    repair needs per-route schema.
     """
-    if not settings.guardrails_enabled:
+    if not (settings.guardrails_enabled or settings.environment != "dev"):
         return None
     return GuardrailChain(
         pre=(SizeGuardrail(), InjectionGuardrail(), PiiGuardrail()),
+        post=(ContentPolicyGuardrail(),),
     )
 
 
@@ -275,13 +294,29 @@ bearer_scheme = HTTPBearer(
 )
 
 
-def require_api_key(
+async def require_api_key(
     settings: Annotated[Settings, Depends(get_settings)],
+    pool: Annotated[object | None, Depends(get_db_pool)],
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_scheme)] = None,
 ) -> str:
+    """Authenticate the bearer key.
+
+    DB-authoritative when `auth_db_enabled` is set AND a database is configured:
+    the key is validated against `api_keys` (hash + `status='active'` + not past
+    `expires_at`), so revocation and expiry take effect at runtime. Otherwise
+    (the default / offline / test path) it falls back to the env allowlist
+    (`ATLAS_API_KEYS`). Only a key *prefix* is ever logged on failure — never the
+    full key (BRA-879/881).
+    """
     if credentials is None or credentials.scheme.lower() != "bearer":
+        record_auth_failure("missing")
         raise HTTPException(status_code=401, detail="missing bearer token")
     key = credentials.credentials.strip()
-    if key not in settings.api_keys:
+    if settings.auth_db_enabled and pool is not None:
+        valid = await key_is_active(cast("Any", pool), key)
+    else:
+        valid = key in settings.api_keys
+    if not valid:
+        record_auth_failure("invalid", key=key)
         raise HTTPException(status_code=401, detail="invalid api key")
     return key

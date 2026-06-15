@@ -73,25 +73,55 @@ class AccountingRecorder:
         self._publisher = publisher
         self._app_name = app_name
 
-    async def record(self, call: CallContext) -> None:
+    async def record(self, call: CallContext) -> Decimal | None:
+        """Persist + publish the priced call; return its cost (None on failure).
+
+        The returned cost lets the service reconcile the monthly budget from the
+        same realized figure. Failures are swallowed (GW-15) and yield None.
+        """
         try:
             record = self._to_record(call)
             await self._recorder.record(record)
             if self._publisher is not None:
                 await self._publisher.publish_record(record)
+            return record.cost
         except Exception:
             log.warning(
                 "accounting record failed (model=%s) — swallowed per GW-15",
                 call.model,
                 exc_info=True,
             )
+            return None
 
     def _to_record(self, call: CallContext) -> CallRecord:
-        rates = self._rates.get(call.model, _ZERO_RATES)
+        # Price by the request alias (what the rate table is keyed by); fall back
+        # to the resolved model id, then to zero (mock / unpriced local models).
+        if call.alias is not None:
+            rates = self._rates.get(call.alias)
+            if rates is None:
+                log.warning(
+                    "no rate for alias=%s — falling back to model=%s",
+                    call.alias,
+                    call.model,
+                )
+                rates = self._rates.get(call.model, _ZERO_RATES)
+        else:
+            rates = self._rates.get(call.model, _ZERO_RATES)
+        if rates is _ZERO_RATES:
+            # DEBUG, not WARNING: zero rates are expected for mock / unpriced local
+            # models, which dominate dev traffic — a warning per call is just noise.
+            # The genuinely-unexpected case (a configured alias missing from the
+            # rate table) already logged a WARNING above.
+            log.debug(
+                "no rate for alias=%s / model=%s — pricing at zero",
+                call.alias,
+                call.model,
+            )
         return CallRecord(
             id=uuid.uuid4(),
             api_key_id=api_key_uuid(call.api_key_id),
             app=self._app_name,
+            alias=call.alias,
             model=call.model,
             provider=provider_for_model(call.model),
             usage=call.usage,

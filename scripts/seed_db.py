@@ -40,6 +40,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from app.accounting.adapter import API_KEY_NS, provider_for_model  # noqa: E402
 from app.accounting.recorder import CallRecord, CallRecorder, Rates, compute_cost  # noqa: E402
 from app.domain.messages import Usage  # noqa: E402
+from app.repositories.api_keys import hash_key  # noqa: E402
 from app.repositories.seed import ALIAS_SEED  # noqa: E402
 
 #: Models the synthetic traffic mixes over (alias or raw model id → rates).
@@ -63,7 +64,7 @@ async def _seed_api_keys(conn: object, keys: list[str]) -> None:
             ON CONFLICT (id) DO NOTHING
             """,
             uuid.uuid5(API_KEY_NS, key),
-            f"seed-sha256:{key}",  # placeholder — local dev only, never a real secret
+            hash_key(key),  # real hash so DB-authoritative auth accepts the key (BRA-881)
             "local-dev",
             "seed_db.py",
         )

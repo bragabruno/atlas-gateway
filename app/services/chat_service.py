@@ -41,6 +41,7 @@ streaming-aware guardrails that inspect the assembled transcript).
 
 from __future__ import annotations
 
+import logging
 import time
 import uuid
 from collections.abc import AsyncIterator, Mapping, Sequence
@@ -65,6 +66,8 @@ from app.guardrails.chain import GuardrailContext
 from app.providers.base import Provider
 from app.providers.registry import ProviderRegistry
 
+log = logging.getLogger(__name__)
+
 #: Sentinel tenant id used when no authenticated key is threaded through (the
 #: unconfigured default path never consults a tenant-scoped collaborator, so the
 #: value is inert there; the wired path always supplies the real key).
@@ -85,6 +88,10 @@ class CallContext:
     api_key_id: str
     model: str
     usage: Usage
+    #: The alias the request carried (e.g. `smart`), if any. Pricing is keyed by
+    #: alias — `model` is the *resolved* provider id, which the rate table isn't
+    #: keyed by — so the adapter prices off this when present.
+    alias: str | None = None
 
 
 class RateLimiter(Protocol):
@@ -207,7 +214,7 @@ class Recorder(Protocol):
     request path — accounting failures are swallowed by the adapters (GW-15).
     """
 
-    async def record(self, call: CallContext) -> None: ...
+    async def record(self, call: CallContext) -> Decimal | None: ...
 
 
 class PromptRegistry(Protocol):
@@ -400,7 +407,7 @@ class ChatService:
 
         # (7) accounting record + Kafka event (never fails the request).
         if self._recorder is not None:
-            await self._record(result, api_key_id=api_key_id)
+            await self._record(result, api_key_id=api_key_id, alias=req.model)
 
         # (8) post-guardrails — schema/content/citation over the response.
         if self._guardrails is not None:
@@ -445,54 +452,63 @@ class ChatService:
             usage=usage,
         )
 
-    async def _record(self, result: ChatResult, *, api_key_id: str) -> None:
+    async def _record(
+        self, result: ChatResult, *, api_key_id: str, alias: str | None = None
+    ) -> None:
         """Hand the call to the accounting seam (GW-14/15).
 
         The recorder owns pricing/persistence/Kafka and swallows its own errors,
         so accounting can never fail or stall the user's completion. The seam is
-        passed the realized `Usage` + resolved model so the adapter can price and
-        emit the `call_records` row and `atlas.calls.v1` event. Budget spend is
-        reconciled from the same realized cost when a budget enforcer is wired.
+        passed the realized `Usage`, the resolved model, and the request `alias`
+        (which pricing is keyed by) so the adapter can price and emit the
+        `call_records` row and `atlas.calls.v1` event. The recorder returns the
+        priced cost, which is then charged against the monthly budget (GW-17) so
+        the cap actually accrues — also swallowing failures off the request path.
         """
         recorder = self._recorder
         if recorder is None:
             return
-        await recorder.record(
+        cost = await recorder.record(
             CallContext(
                 api_key_id=api_key_id,
                 model=result.model,
                 usage=result.usage,
+                alias=alias,
             )
         )
+        if self._budget is not None and cost is not None:
+            try:
+                await self._budget.charge(api_key_id=api_key_id, cost=cost)
+            except Exception:
+                log.warning("budget charge failed — swallowed", exc_info=True)
 
-    def stream(
+    async def stream(
         self,
         req: ChatCompletionRequest,
         *,
         api_key_id: str = _ANON_TENANT,
     ) -> AsyncIterator[str]:
-        """Return an SSE frame iterator for a streaming completion.
+        """Resolve + run admission, then return the SSE frame iterator.
 
-        The provider is resolved eagerly (raising `UnknownModelError` before the
-        response body starts) so the controller can map it to a 404; the
-        returned async generator yields the OpenAI-compatible `data:` frames.
-        Pre-checks (rate-limit, budget, pre-guardrails, prompt resolution) run
-        before the first frame; post-guardrails and cache get/set are skipped on
-        the streamed path (see the module docstring).
+        Admission (rate-limit, budget, pre-guardrails, prompt resolution) runs
+        HERE — awaited before the iterator is returned — so `RateLimitExceeded`,
+        `BudgetExceeded`, `GuardrailRejection`, and `UnknownModelError` surface to
+        the controller as a clean 4xx BEFORE the 200 stream opens. (Previously
+        they ran lazily inside the generator, after the response status was
+        committed — a rate-limit/budget 429 bypass on the streamed path.)
+        Post-guardrails and cache get/set remain skipped while streaming.
         """
         provider = self._resolve(req.model)
-        return self._stream_frames(req, provider, api_key_id=api_key_id)
+        base_messages = self._provider_messages(req)
+        messages, _ = await self._pre_checks(req, base_messages, api_key_id=api_key_id)
+        return self._stream_frames(req, provider, messages)
 
     async def _stream_frames(
         self,
         req: ChatCompletionRequest,
         provider: Provider,
-        *,
-        api_key_id: str,
+        messages: list[Message],
     ) -> AsyncIterator[str]:
-        base_messages = self._provider_messages(req)
-        messages, _ = await self._pre_checks(req, base_messages, api_key_id=api_key_id)
-
         completion_id = f"chatcmpl-{uuid.uuid4().hex}"
         created = int(time.time())
 

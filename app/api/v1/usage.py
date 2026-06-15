@@ -12,6 +12,7 @@ since : ISO date string (YYYY-MM-DD), optional — defaults to the 1st of the
 
 from __future__ import annotations
 
+import uuid
 from datetime import date
 from decimal import Decimal
 from typing import Annotated, Any
@@ -83,6 +84,26 @@ GROUP BY app, model
 ORDER BY total_cost_usd DESC
 """
 
+#: Sets the RLS tenant GUC for the current transaction so the row-level-security
+#: policy on call_records scopes the read to this key — the database-enforced
+#: backstop behind the explicit WHERE filter (BRA-887). `true` = is_local, so the
+#: setting is reset at transaction end and the pooled connection carries no
+#: tenant state back to the pool.
+_SET_TENANT_GUC = "SELECT set_config('atlas.api_key_id', $1, true)"
+
+
+async def _fetch_usage_rows(pool: Any, api_key_id: uuid.UUID, window_start: date) -> list[Any]:
+    """Run the usage aggregate with the RLS tenant GUC set for this key.
+
+    asyncpg's pool hands out a transient connection per call, so the `set_config`
+    and the SELECT must share one explicit transaction — otherwise the
+    transaction-local GUC wouldn't survive to the query. The WHERE clause still
+    scopes the read on its own; the GUC adds the RLS backstop (BRA-887).
+    """
+    async with pool.acquire() as conn, conn.transaction():
+        await conn.execute(_SET_TENANT_GUC, str(api_key_id))
+        return await conn.fetch(_USAGE_SQL, api_key_id, window_start)
+
 
 # ---------------------------------------------------------------------------
 # Route
@@ -121,7 +142,7 @@ async def get_usage(
     # writes into call_records.api_key_id, so this lookup matches what was
     # written without a separate api_keys table join.
     api_key_id = api_key_uuid(key)
-    rows = await pool.fetch(_USAGE_SQL, api_key_id, window_start)
+    rows = await _fetch_usage_rows(pool, api_key_id, window_start)
 
     return UsageResponse(
         since=window_start,

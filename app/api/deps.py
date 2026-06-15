@@ -38,6 +38,7 @@ from app.guardrails.size import SizeGuardrail
 from app.limits._redis_typing import create_redis_client
 from app.limits.budget import MonthlyBudgetEnforcer, monthly_period
 from app.limits.ratelimit import TokenBucketRateLimiter
+from app.observability.security import record_auth_failure
 from app.providers.registry import ProviderRegistry
 from app.services.chat_service import (
     BudgetEnforcer,
@@ -280,8 +281,10 @@ def require_api_key(
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_scheme)] = None,
 ) -> str:
     if credentials is None or credentials.scheme.lower() != "bearer":
+        record_auth_failure("missing")
         raise HTTPException(status_code=401, detail="missing bearer token")
     key = credentials.credentials.strip()
     if key not in settings.api_keys:
+        record_auth_failure("invalid", key=key)
         raise HTTPException(status_code=401, detail="invalid api key")
     return key

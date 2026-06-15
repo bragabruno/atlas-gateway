@@ -35,6 +35,7 @@ from app.domain.openai import ChatCompletionRequest, ChatCompletionResponse, Err
 from app.guardrails.chain import GuardrailRejection
 from app.limits.budget import BudgetExceeded
 from app.limits.ratelimit import RateLimitExceeded
+from app.observability.security import record_rate_limit_rejection
 from app.services.chat_service import ChatService
 
 router = APIRouter()
@@ -120,12 +121,14 @@ async def chat_completions(
     except UnknownModelError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except RateLimitExceeded as exc:
+        record_rate_limit_rejection("rate_limit", api_key_id=key)
         return JSONResponse(
             status_code=429,
             content=exc.body,
             headers={"Retry-After": str(exc.retry_after)},
         )
     except BudgetExceeded as exc:
+        record_rate_limit_rejection("budget", api_key_id=key)
         return JSONResponse(
             status_code=429,
             content=exc.body,

@@ -97,6 +97,31 @@ async def test_record_persists_priced_row() -> None:
 
 
 @pytest.mark.asyncio
+async def test_record_prices_by_alias_not_resolved_model() -> None:
+    """Regression (BRA-886): the rate table is keyed by alias, but `model` is the
+    *resolved* provider id. Pricing must use the alias, not fall through to $0."""
+    conn = _FakeConn()
+    adapter = AccountingRecorder(
+        CallRecorder(conn),
+        rates={"smart": Rates(in_per_1m=Decimal("3.00"), out_per_1m=Decimal("15.00"))},
+    )
+
+    await adapter.record(
+        CallContext(
+            api_key_id="dev-key",
+            model="claude-sonnet-4-6",  # resolved id — NOT a key in the rate map
+            usage=Usage(input_tokens=1000, output_tokens=500),
+            alias="smart",
+        )
+    )
+
+    _, args = conn.executed[0]
+    assert args[4] == "smart"  # alias column recorded
+    assert args[5] == "claude-sonnet-4-6"  # resolved model recorded
+    assert args[11] == Decimal("0.0105")  # priced via the alias, not $0
+
+
+@pytest.mark.asyncio
 async def test_unknown_model_prices_at_zero() -> None:
     conn = _FakeConn()
     adapter = AccountingRecorder(CallRecorder(conn), rates={})

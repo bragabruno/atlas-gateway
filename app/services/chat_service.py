@@ -85,6 +85,10 @@ class CallContext:
     api_key_id: str
     model: str
     usage: Usage
+    #: The alias the request carried (e.g. `smart`), if any. Pricing is keyed by
+    #: alias — `model` is the *resolved* provider id, which the rate table isn't
+    #: keyed by — so the adapter prices off this when present.
+    alias: str | None = None
 
 
 class RateLimiter(Protocol):
@@ -400,7 +404,7 @@ class ChatService:
 
         # (7) accounting record + Kafka event (never fails the request).
         if self._recorder is not None:
-            await self._record(result, api_key_id=api_key_id)
+            await self._record(result, api_key_id=api_key_id, alias=req.model)
 
         # (8) post-guardrails — schema/content/citation over the response.
         if self._guardrails is not None:
@@ -445,14 +449,16 @@ class ChatService:
             usage=usage,
         )
 
-    async def _record(self, result: ChatResult, *, api_key_id: str) -> None:
+    async def _record(
+        self, result: ChatResult, *, api_key_id: str, alias: str | None = None
+    ) -> None:
         """Hand the call to the accounting seam (GW-14/15).
 
         The recorder owns pricing/persistence/Kafka and swallows its own errors,
         so accounting can never fail or stall the user's completion. The seam is
-        passed the realized `Usage` + resolved model so the adapter can price and
-        emit the `call_records` row and `atlas.calls.v1` event. Budget spend is
-        reconciled from the same realized cost when a budget enforcer is wired.
+        passed the realized `Usage`, the resolved model, and the request `alias`
+        (which pricing is keyed by) so the adapter can price and emit the
+        `call_records` row and `atlas.calls.v1` event.
         """
         recorder = self._recorder
         if recorder is None:
@@ -462,6 +468,7 @@ class ChatService:
                 api_key_id=api_key_id,
                 model=result.model,
                 usage=result.usage,
+                alias=alias,
             )
         )
 

@@ -87,11 +87,14 @@ class AccountingRecorder:
             )
 
     def _to_record(self, call: CallContext) -> CallRecord:
-        rates = self._rates.get(call.model, _ZERO_RATES)
+        # Price by the request alias (what the rate table is keyed by); fall back
+        # to the resolved model id, then to zero (mock / unpriced local models).
+        rates = self._rates.get(call.alias or call.model, _ZERO_RATES)
         return CallRecord(
             id=uuid.uuid4(),
             api_key_id=api_key_uuid(call.api_key_id),
             app=self._app_name,
+            alias=call.alias,
             model=call.model,
             provider=provider_for_model(call.model),
             usage=call.usage,
